@@ -1,0 +1,13 @@
+---
+# This playbook has been retired.
+#
+# HAProxy + keepalived (floating VIP) was the original HA strategy for the
+# control plane load balancer, but gratuitous ARP for secondary IPs does not
+# work on VMware Fusion due to vSwitch security restrictions.
+#
+# HA is now provided by DNS round-robin:
+#   k8s-api.lab.local -> 172.16.79.21 (k8s-control-01)
+#                     -> 172.16.79.22 (k8s-control-02)
+#
+# The controlPlaneEndpoint in kubeadm is set to k8s-api.lab.local:6443,
+# which resolves to both control plane nodes.

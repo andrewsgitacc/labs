@@ -1,0 +1,87 @@
+---
+- name: Configure BIND DNS Forward and Reverse Zones
+  hosts: dns_servers
+  become: true
+  vars:
+    domain_name: "lab.local"
+    reverse_net: "79.16.172"
+    dns_server_ip: "172.16.79.10"
+    dns_hostname: "dns.lab.local."
+
+  tasks:
+    - name: Append zone definitions to /etc/named.conf
+      ansible.builtin.blockinfile:
+        path: /etc/named.conf
+        insertbefore: 'include "/etc/named.rfc1912.zones";'
+        marker: "// {mark} ANSIBLE MANAGED ZONES"
+        block: |
+          zone "{{ domain_name }}" IN {
+              type master;
+              file "{{ domain_name }}.db";
+              allow-update { none; };
+          };
+
+          zone "{{ reverse_net }}.in-addr.arpa" IN {
+              type master;
+              file "{{ reverse_net }}.db";
+              allow-update { none; };
+          };
+      notify: Restart BIND service
+
+    - name: Create forward zone file
+      ansible.builtin.copy:
+        dest: "/var/named/{{ domain_name }}.db"
+        owner: root
+        group: named
+        mode: '0640'
+        content: |
+          $TTL 86400
+          @   IN  SOA {{ dns_hostname }} admin.{{ domain_name }}. (
+                  2026061201 ; Serial
+                  3600       ; Refresh
+                  1800       ; Retry
+                  604800     ; Expire
+                  86400 )    ; Minimum TTL
+          ; Name Servers
+          @   IN  NS  {{ dns_hostname }}
+          ; A Records for Name Servers
+          dns IN  A   {{ dns_server_ip }}
+          ; Core Lab Records
+          router IN A   172.16.79.2
+          client IN A   172.16.79.50
+      notify: Restart BIND service
+
+    - name: Create reverse zone file
+      ansible.builtin.copy:
+        dest: "/var/named/{{ reverse_net }}.db"
+        owner: root
+        group: named
+        mode: '0640'
+        content: |
+          $TTL 86400
+          @   IN  SOA {{ dns_hostname }} admin.{{ domain_name }}. (
+                  2026061201 ; Serial
+                  3600       ; Refresh
+                  1800       ; Retry
+                  604800     ; Expire
+                  86400 )    ; Minimum TTL
+          ; Name Servers
+          @   IN  NS  {{ dns_hostname }}
+          ; PTR Records (Last octet of the IP)
+          10  IN  PTR {{ dns_hostname }}
+          2   IN  PTR router.{{ domain_name }}.
+          50  IN  PTR client.{{ domain_name }}.
+      notify: Restart BIND service
+
+    - name: Ensure BIND service is started and enabled
+      ansible.builtin.systemd_service:
+        name: named
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart BIND service
+      ansible.builtin.systemd_service:
+        name: named
+        state: restarted
+

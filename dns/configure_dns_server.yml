@@ -1,0 +1,199 @@
+---
+# Part 1: Provision the clone using local Mac vmrun commands
+- import_playbook: provision_dns_vm.yml
+
+# Part 2: Map the runtime IP environment dynamically for the initial connection
+- hosts: localhost
+  gather_facts: false
+  connection: local  
+  tasks:
+    - name: Register new VM to host group using discovered IP address
+      ansible.builtin.add_host:
+        name: "{{ hostvars['localhost']['discovered_vm_ip'] }}"
+        groups: dns_servers
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+# Part 3: Deploy BIND, configure zones, and transition network interface to Static IP
+- name: Install and Configure BIND DNS Server
+  hosts: dns_servers
+  become: true
+  vars:
+    # Target Static Networking Parameters
+    static_ip: "172.16.79.10/24"
+    static_gateway: "172.16.79.2"       # Default gateway for VMware Fusion NAT networks
+    static_dns: "127.0.0.1"             # Point back to itself since it is the DNS server
+    
+    # BIND Configuration Variables
+    domain_name: "lab.local"
+    reverse_net: "79.16.172"
+    dns_server_ip: "172.16.79.10"
+    dns_hostname: "dns.lab.local."
+    dns_forwarders:
+      - "8.8.8.8"
+      - "1.1.1.1"
+
+  tasks:
+    # NEW TASK: Set the persistent system hostname inside CentOS 9
+    - name: Set system hostname to dns.lab.local
+      ansible.builtin.hostname:
+        name: "dns.lab.local"
+
+    - name: Install BIND utilities and packages
+      ansible.builtin.dnf:
+        name:
+          - bind
+          - bind-utils
+        state: present
+
+    - name: Configure named.conf configuration file
+      ansible.builtin.copy:
+        dest: /etc/named.conf
+        owner: root
+        group: named
+        mode: '0640'
+        content: |
+          options {
+              listen-on port 53 { any; };
+              listen-on-v6 port 53 { any; };
+              directory   "/var/named";
+              dump-file   "/var/named/data/cache_dump.db";
+              statistics-file "/var/named/data/named_stats.txt";
+              memstatistics-file "/var/named/data/named_mem_stats.txt";
+              secroots-file   "/var/named/data/named.secroots";
+              recursing-file  "/var/named/data/named.recursing";
+              allow-query     { any; };
+              recursion yes;
+              dnssec-validation yes;
+              managed-keys-directory "/var/named/dynamic";
+              pid-file "/run/named/named.pid";
+              session-keyfile "/run/named/session.key";
+              forwarders {
+                  {% for forwarder in dns_forwarders %}
+                  {{ forwarder }};
+                  {% endfor %}
+              };
+          };
+          logging {
+              channel default_debug {
+                  file "data/named.run";
+                  severity dynamic;
+              };
+          };
+          zone "." IN {
+              type hint;
+              file "named.ca";
+          };
+          include "/etc/named.rfc1912.zones";
+          include "/etc/named.root.key";
+      notify: Restart BIND service
+
+    - name: Append zone definitions to /etc/named.conf
+      ansible.builtin.blockinfile:
+        path: /etc/named.conf
+        insertbefore: 'include "/etc/named.rfc1912.zones";'
+        marker: "// {mark} ANSIBLE MANAGED ZONES"
+        block: |
+          zone "{{ domain_name }}" IN {
+              type master;
+              file "{{ domain_name }}.db";
+              allow-update { none; };
+          };
+
+          zone "{{ reverse_net }}.in-addr.arpa" IN {
+              type master;
+              file "{{ reverse_net }}.db";
+              allow-update { none; };
+          };
+      notify: Restart BIND service
+
+    - name: Create forward zone file
+      ansible.builtin.copy:
+        dest: "/var/named/{{ domain_name }}.db"
+        owner: root
+        group: named
+        mode: '0640'
+        content: |
+          $TTL 86400
+          @   IN  SOA {{ dns_hostname }} admin.{{ domain_name }}. (
+                  2026061201 ; Serial
+                  3600       ; Refresh
+                  1800       ; Retry
+                  604800     ; Expire
+                  86400 )    ; Minimum TTL
+          @   IN  NS  {{ dns_hostname }}
+          dns IN  A   {{ dns_server_ip }}
+          router IN A   172.16.79.2
+          client IN A   172.16.79.50
+          k8s-api  IN A  172.16.79.21
+          k8s-api  IN A  172.16.79.22
+          k8s-api  IN A  172.16.79.23
+          k8s-control-01 IN A   172.16.79.21
+          k8s-control-02 IN A   172.16.79.22
+          k8s-control-03 IN A   172.16.79.23
+          k8s-worker-01  IN A   172.16.79.31
+          k8s-worker-02  IN A   172.16.79.32
+          k8s-worker-03  IN A   172.16.79.33
+      notify: Restart BIND service
+
+    - name: Create reverse zone file
+      ansible.builtin.copy:
+        dest: "/var/named/{{ reverse_net }}.db"
+        owner: root
+        group: named
+        mode: '0640'
+        content: |
+          $TTL 86400
+          @   IN  SOA {{ dns_hostname }} admin.{{ domain_name }}. (
+                  2026061201 ; Serial
+                  3600       ; Refresh
+                  1800       ; Retry
+                  604800     ; Expire
+                  86400 )    ; Minimum TTL
+          @   IN  NS  {{ dns_hostname }}
+          10  IN  PTR {{ dns_hostname }}
+          2   IN  PTR router.{{ domain_name }}.
+          50  IN  PTR client.{{ domain_name }}.
+          20  IN  PTR  k8s-api.lab.local.
+          21  IN  PTR k8s-control-01.lab.local.
+          22  IN  PTR k8s-control-02.lab.local.
+          23  IN  PTR k8s-control-03.lab.local.
+          31  IN  PTR k8s-worker-01.lab.local.
+          32  IN  PTR k8s-worker-02.lab.local.
+          33  IN  PTR k8s-worker-03.lab.local.
+      notify: Restart BIND service
+
+    - name: Allow DNS traffic through firewalld
+      ansible.posix.firewalld:
+        service: dns
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Ensure BIND service is running and enabled on boot
+      ansible.builtin.systemd_service:
+        name: named
+        state: started
+        enabled: true
+
+    - name: Configure NetworkManager connection profile to Static IP
+      community.general.nmcli:
+        conn_name: "ens160"
+        ifname: "ens160"
+        type: ethernet
+        ip4: "{{ static_ip }}"
+        gw4: "{{ static_gateway }}"
+        dns4: "{{ static_dns }}"
+        state: present
+
+    - name: Apply static IP configuration in background
+      ansible.builtin.shell: "sleep 2 && nmcli connection up ens160"
+      async: 10
+      poll: 0
+
+  handlers:
+    - name: Restart BIND service
+      ansible.builtin.systemd_service:
+        name: named
+        state: restarted
+

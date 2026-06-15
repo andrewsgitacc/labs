@@ -1,0 +1,77 @@
+---
+- name: Install and Configure BIND DNS Server
+  hosts: dns_servers
+  become: true
+  vars:
+    dns_forwarders:
+      - "8.8.8.8"
+      - "1.1.1.1"
+  tasks:
+    - name: Install BIND utilities and packages
+      ansible.builtin.dnf:
+        name:
+          - bind
+          - bind-utils
+        state: present
+
+    - name: Configure named.conf configuration file
+      ansible.builtin.copy:
+        dest: /etc/named.conf
+        owner: root
+        group: named
+        mode: '0640'
+        content: |
+          options {
+              listen-on port 53 { any; };
+              listen-on-v6 port 53 { any; };
+              directory   "/var/named";
+              dump-file   "/var/named/data/cache_dump.db";
+              statistics-file "/var/named/data/named_stats.txt";
+              memstatistics-file "/var/named/data/named_mem_stats.txt";
+              secroots-file   "/var/named/data/named.secroots";
+              recursing-file  "/var/named/data/named.recursing";
+              allow-query     { any; };
+              recursion yes;
+              dnssec-validation yes;
+              managed-keys-directory "/var/named/dynamic";
+              pid-file "/run/named/named.pid";
+              session-keyfile "/run/named/session.key";
+              forwarders {
+                  {% for forwarder in dns_forwarders %}
+                  {{ forwarder }};
+                  {% endfor %}
+              };
+          };
+          logging {
+              channel default_debug {
+                  file "data/named.run";
+                  severity dynamic;
+              };
+          };
+          zone "." IN {
+              type hint;
+              file "named.ca";
+          };
+          include "/etc/named.rfc1912.zones";
+          include "/etc/named.root.key";
+      notify: Restart BIND service
+
+    - name: Allow DNS traffic through firewalld
+      ansible.posix.firewalld:
+        service: dns
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Ensure BIND service is running and enabled on boot
+      ansible.builtin.systemd_service:
+        name: named
+        state: started
+        enabled: true
+
+  handlers:
+    - name: Restart BIND service
+      ansible.builtin.systemd_service:
+        name: named
+        state: restarted
+

@@ -1,0 +1,49 @@
+---
+- name: Deploy Local VMware Fusion Template
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    template_path: "/Users/andrew/Virtual Machines.localized/CentOS9aarch64.vmwarevm/CentOS9aarch64.vmx"
+    target_path: "/Users/andrew/Virtual Machines.localized/dns.vmwarevm/dns.vmx"
+
+  tasks:
+    - name: Clone the VMware Fusion template folder
+      ansible.builtin.command:
+        cmd: 'cp -R "{{ template_path | dirname }}" "{{ target_path | dirname }}"'
+      args:
+        creates: "{{ target_path }}"
+
+    - name: Rename the main configuration file
+      ansible.builtin.shell:
+        cmd: 'mv "{{ target_path | dirname }}/{{ template_path | basename }}" "{{ target_path }}"'
+      args:
+        creates: "{{ target_path }}"
+
+    - name: Update internal VMware configuration parameters
+      ansible.builtin.lineinfile:
+        path: "{{ target_path }}"
+        regexp: '^displayName\s*='
+        line: 'displayName = "dns"'
+
+    - name: Power on the newly cloned 'dns' VM in VMware Fusion
+      ansible.builtin.command:
+        cmd: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" start "{{ target_path }}" gui'
+
+    - name: Wait for VMware Tools to boot and fetch the dynamic IP address
+      ansible.builtin.command:
+        cmd: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "{{ target_path }}"'
+      register: vmrun_ip_output
+      until: vmrun_ip_output.rc == 0 and vmrun_ip_output.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Save the discovered IP address to a global variable
+      ansible.builtin.set_fact:
+        discovered_vm_ip: "{{ vmrun_ip_output.stdout.strip() }}"
+
+    - name: Print the automatically discovered IP address
+      ansible.builtin.debug:
+        msg: "The newly deployed VM was automatically assigned IP address: {{ discovered_vm_ip }}"
+

@@ -1,0 +1,178 @@
+---
+- name: Initialise Primary Control Plane Node
+  hosts: k8s-control-01.lab.local
+  become: true
+  vars:
+    vip_dns: k8s-api.lab.local
+    pod_network_cidr: 10.244.0.0/16
+    kubeadm_config_path: /etc/kubernetes/kubeadm-config.yaml
+    firewall_ports:
+      - 6443/tcp   # Kubernetes API server
+      - 10250/tcp  # kubelet API
+      - 10251/tcp  # kube-scheduler
+      - 10252/tcp  # kube-controller-manager
+      - 2379/tcp   # etcd client
+      - 2380/tcp   # etcd peer
+      - 179/tcp    # Flannel BGP
+      - 8472/udp   # Flannel VXLAN
+      - 30000-32767/tcp  # NodePort services
+
+  tasks:
+    - name: Open required firewall ports on control plane
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop: "{{ firewall_ports }}"
+
+    - name: Write kubeadm configuration file
+      ansible.builtin.copy:
+        dest: "{{ kubeadm_config_path }}"
+        owner: root
+        group: root
+        mode: '0600'
+        content: |
+          apiVersion: kubeadm.k8s.io/v1beta4
+          kind: ClusterConfiguration
+          kubernetesVersion: stable
+          controlPlaneEndpoint: "{{ vip_dns }}:6443"
+          networking:
+            podSubnet: "{{ pod_network_cidr }}"
+          apiServer:
+            certSANs:
+              - "{{ vip_dns }}"
+              - k8s-control-01.lab.local
+              - k8s-control-02.lab.local
+              - k8s-control-03.lab.local
+              - 172.16.79.21
+              - 172.16.79.22
+              - 172.16.79.23
+          etcd:
+            local:
+              dataDir: /var/lib/etcd
+          ---
+          apiVersion: kubeadm.k8s.io/v1beta4
+          kind: InitConfiguration
+          localAPIEndpoint:
+            advertiseAddress: 172.16.79.21
+            bindPort: 6443
+
+    - name: Check if cluster is already initialised
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: kubeadm_init_check
+
+    - name: Run kubeadm init on primary control plane
+      ansible.builtin.command: >
+        kubeadm init --config {{ kubeadm_config_path }} --upload-certs
+      when: not kubeadm_init_check.stat.exists
+      register: kubeadm_init_output
+      changed_when: true
+
+    - name: Print kubeadm init output (contains join commands)
+      ansible.builtin.debug:
+        var: kubeadm_init_output.stdout_lines
+      when: not kubeadm_init_check.stat.exists
+
+    - name: Create .kube directory for root
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    - name: Copy admin.conf to root kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Create .kube directory for admin user
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Copy admin.conf to admin user kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/admin/.kube/config
+        remote_src: true
+        owner: admin
+        group: admin
+        mode: '0600'
+        force: true
+
+    - name: Fetch admin.conf to Ansible controller (for local kubectl access)
+      ansible.builtin.fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ playbook_dir }}/admin.conf"
+        flat: true
+
+    - name: Ensure .kube directory exists on Ansible controller
+      ansible.builtin.file:
+        path: "{{ lookup('env', 'HOME') }}/.kube"
+        state: directory
+        mode: '0700'
+      delegate_to: localhost
+      become: false
+
+    - name: Copy admin.conf to ~/.kube/config on Ansible controller
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/admin.conf"
+        dest: "{{ lookup('env', 'HOME') }}/.kube/config"
+        mode: '0600'
+      delegate_to: localhost
+      become: false
+
+    - name: Set kube-proxy mode to iptables (fixes nftables/legacy conflict on CentOS Stream 9)
+      ansible.builtin.shell: |
+        kubectl get configmap kube-proxy -n kube-system -o json | \
+        python3 -c "import sys,json; c=json.load(sys.stdin); c['data']['config.conf']=c['data']['config.conf'].replace('mode: \"\"','mode: \"iptables\"'); print(json.dumps(c))" | \
+        kubectl apply -f -
+      changed_when: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Restart kube-proxy to apply mode change
+      ansible.builtin.command: >
+        kubectl rollout restart daemonset kube-proxy -n kube-system
+      changed_when: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Wait for kube-proxy to be ready
+      ansible.builtin.command: >
+        kubectl rollout status daemonset kube-proxy -n kube-system --timeout=60s
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+
+    - name: Generate new certificate key for control plane join
+      ansible.builtin.command: kubeadm init phase upload-certs --upload-certs
+      register: cert_key_output
+      changed_when: true
+
+    - name: Generate control plane join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_command_output
+      changed_when: false
+
+    - name: Save control plane join command to file on controller
+      ansible.builtin.copy:
+        content: "{{ join_command_output.stdout }} --control-plane --certificate-key {{ cert_key_output.stdout_lines[-1] }}\n"
+        dest: "{{ playbook_dir }}/control_plane_join_command.txt"
+      delegate_to: localhost
+      become: false
+
+    - name: Save worker join command to file on controller
+      ansible.builtin.copy:
+        content: "{{ join_command_output.stdout }}\n"
+        dest: "{{ playbook_dir }}/worker_join_command.txt"
+      delegate_to: localhost
+      become: false

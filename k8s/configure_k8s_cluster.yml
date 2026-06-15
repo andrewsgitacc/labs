@@ -1,0 +1,166 @@
+---
+# Part 1: Provision the 6 VM containers via our loop layout
+- import_playbook: provision_k8s_nodes.yml
+
+# Part 2: Dynamic Hypervisor IP Discovery phase for all 6 nodes
+- hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Intercept DHCP IP for k8s-control-01
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "/Users/andrew/Virtual Machines.localized/k8s-control-01.vmwarevm/k8s-control-01.vmx"'
+      register: control01_ip
+      until: control01_ip.rc == 0 and control01_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Intercept DHCP IP for k8s-control-02
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "/Users/andrew/Virtual Machines.localized/k8s-control-02.vmwarevm/k8s-control-02.vmx"'
+      register: control02_ip
+      until: control02_ip.rc == 0 and control02_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Intercept DHCP IP for k8s-control-03
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "/Users/andrew/Virtual Machines.localized/k8s-control-03.vmwarevm/k8s-control-03.vmx"'
+      register: control03_ip
+      until: control03_ip.rc == 0 and control03_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Intercept DHCP IP for k8s-worker-01
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "/Users/andrew/Virtual Machines.localized/k8s-worker-01.vmwarevm/k8s-worker-01.vmx"'
+      register: worker01_ip
+      until: worker01_ip.rc == 0 and worker01_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Intercept DHCP IP for k8s-worker-02
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "/Users/andrew/Virtual Machines.localized/k8s-worker-02.vmwarevm/k8s-worker-02.vmx"'
+      register: worker02_ip
+      until: worker02_ip.rc == 0 and worker02_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Intercept DHCP IP for k8s-worker-03
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" getGuestIPAddress "/Users/andrew/Virtual Machines.localized/k8s-worker-03.vmwarevm/k8s-worker-03.vmx"'
+      register: worker03_ip
+      until: worker03_ip.rc == 0 and worker03_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    # Register each machine dynamically into our SSH execution group
+    - name: Register control plane node 01 to inventory
+      ansible.builtin.add_host:
+        name: "{{ control01_ip.stdout.strip() }}"
+        groups: new_cluster_nodes
+        assigned_hostname: "k8s-control-01.lab.local"
+        assigned_static_ip: "172.16.79.21/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+    - name: Register control plane node 02 to inventory
+      ansible.builtin.add_host:
+        name: "{{ control02_ip.stdout.strip() }}"
+        groups: new_cluster_nodes
+        assigned_hostname: "k8s-control-02.lab.local"
+        assigned_static_ip: "172.16.79.22/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+    - name: Register control plane node 03 to inventory
+      ansible.builtin.add_host:
+        name: "{{ control03_ip.stdout.strip() }}"
+        groups: new_cluster_nodes
+        assigned_hostname: "k8s-control-03.lab.local"
+        assigned_static_ip: "172.16.79.23/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+    - name: Register worker node 01 to inventory
+      ansible.builtin.add_host:
+        name: "{{ worker01_ip.stdout.strip() }}"
+        groups: new_cluster_nodes
+        assigned_hostname: "k8s-worker-01.lab.local"
+        assigned_static_ip: "172.16.79.31/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+    - name: Register worker node 02 to inventory
+      ansible.builtin.add_host:
+        name: "{{ worker02_ip.stdout.strip() }}"
+        groups: new_cluster_nodes
+        assigned_hostname: "k8s-worker-02.lab.local"
+        assigned_static_ip: "172.16.79.32/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+    - name: Register worker node 03 to inventory
+      ansible.builtin.add_host:
+        name: "{{ worker03_ip.stdout.strip() }}"
+        groups: new_cluster_nodes
+        assigned_hostname: "k8s-worker-03.lab.local"
+        assigned_static_ip: "172.16.79.33/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o PubkeyAuthentication=no -o PreferredAuthentications=password"
+
+# Part 3: Connect over SSH and apply all system profiles and cluster prep tasks in parallel
+- name: Lock Down System Profiles, Networking, and Kubernetes Prerequisites
+  hosts: new_cluster_nodes
+  become: true
+  vars:
+    static_gateway: "172.16.79.2"
+    dns_server: "172.16.79.10"
+
+  tasks:
+    - name: Set local system hostname permanently
+      ansible.builtin.hostname:
+        name: "{{ assigned_hostname }}"
+
+    - name: Disable swap space permanently (Required for K8s)
+      ansible.builtin.shell: "swapoff -a && sed -i '/swap/d' /etc/fstab"
+      changed_when: true
+
+    - name: Load required Kubernetes kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - overlay
+        - br_netfilter
+
+    - name: Persist kernel modules across reboots
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: |
+          overlay
+          br_netfilter
+        mode: '0644'
+
+    - name: Configure sysctl parameters for Kubernetes networking
+      ansible.posix.sysctl:
+        name: "{{ item.name }}"
+        value: "{{ item.value }}"
+        sysctl_set: true
+        state: present
+        reload: true
+      loop:
+        - { name: 'net.bridge.bridge-nf-call-iptables', value: '1' }
+        - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
+        - { name: 'net.ipv4.ip_forward', value: '1' }
+
+    - name: Reconfigure NetworkManager connection profiles to Static IPs
+      community.general.nmcli:
+        conn_name: "ens160"
+        ifname: "ens160"
+        type: ethernet
+        ip4: "{{ assigned_static_ip }}"
+        gw4: "{{ static_gateway }}"
+        dns4: "{{ dns_server }}"
+        state: present
+
+    - name: Apply static IP configuration across all cluster nodes concurrently
+      ansible.builtin.shell: "sleep 2 && nmcli connection up ens160"
+      async: 10
+      poll: 0

@@ -1,0 +1,181 @@
+---
+- name: Join Second Control Plane Node
+  hosts: k8s-control-02.lab.local
+  become: true
+  vars:
+    join_command_file: "{{ playbook_dir }}/control_plane_join_command.txt"
+    firewall_ports:
+      - 6443/tcp
+      - 10250/tcp
+      - 10251/tcp
+      - 10252/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 179/tcp
+      - 8472/udp   # Flannel VXLAN
+      - 30000-32767/tcp  # NodePort services
+
+  tasks:
+    - name: Open required firewall ports on control plane
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop: "{{ firewall_ports }}"
+
+    - name: Check if node is already joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf_check
+
+    - name: Read control plane join command from file
+      ansible.builtin.set_fact:
+        cp_join_command: "{{ lookup('file', join_command_file) }}"
+      when: not kubelet_conf_check.stat.exists
+
+    - name: Join second control plane node
+      ansible.builtin.command: "{{ cp_join_command }}"
+      when: not kubelet_conf_check.stat.exists
+      changed_when: true
+
+    - name: Create .kube directory for root
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    - name: Copy admin.conf to root kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Create .kube directory for admin user
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Copy admin.conf to admin user kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/admin/.kube/config
+        remote_src: true
+        owner: admin
+        group: admin
+        mode: '0600'
+        force: true
+
+- name: Join Third Control Plane Node
+  hosts: k8s-control-03.lab.local
+  become: true
+  vars:
+    join_command_file: "{{ playbook_dir }}/control_plane_join_command.txt"
+    firewall_ports:
+      - 6443/tcp
+      - 10250/tcp
+      - 10251/tcp
+      - 10252/tcp
+      - 2379/tcp
+      - 2380/tcp
+      - 179/tcp
+      - 8472/udp   # Flannel VXLAN
+      - 30000-32767/tcp  # NodePort services
+
+  tasks:
+    - name: Open required firewall ports on control plane
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop: "{{ firewall_ports }}"
+
+    - name: Check if node is already joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf_check
+
+    - name: Read control plane join command from file
+      ansible.builtin.set_fact:
+        cp_join_command: "{{ lookup('file', join_command_file) }}"
+      when: not kubelet_conf_check.stat.exists
+
+    - name: Join third control plane node
+      ansible.builtin.command: "{{ cp_join_command }}"
+      when: not kubelet_conf_check.stat.exists
+      changed_when: true
+
+    - name: Create .kube directory for root
+      ansible.builtin.file:
+        path: /root/.kube
+        state: directory
+        mode: '0700'
+
+    - name: Copy admin.conf to root kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /root/.kube/config
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0600'
+
+    - name: Create .kube directory for admin user
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Copy admin.conf to admin user kubeconfig
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/admin/.kube/config
+        remote_src: true
+        owner: admin
+        group: admin
+        mode: '0600'
+        force: true
+
+- name: Join Worker Nodes
+  hosts: workers
+  become: true
+  vars:
+    join_command_file: "{{ playbook_dir }}/worker_join_command.txt"
+    firewall_ports:
+      - 10250/tcp
+      - 179/tcp
+      - 8472/udp   # Flannel VXLAN
+      - 30000-32767/tcp  # NodePort services
+
+  tasks:
+    - name: Open required firewall ports on workers
+      ansible.posix.firewalld:
+        port: "{{ item }}"
+        permanent: true
+        state: enabled
+        immediate: true
+      loop: "{{ firewall_ports }}"
+
+    - name: Check if node is already joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf_check
+
+    - name: Read worker join command from file
+      ansible.builtin.set_fact:
+        worker_join_command: "{{ lookup('file', join_command_file) }}"
+      when: not kubelet_conf_check.stat.exists
+
+    - name: Join worker node to cluster
+      ansible.builtin.command: "{{ worker_join_command }}"
+      when: not kubelet_conf_check.stat.exists
+      changed_when: true

@@ -1,0 +1,100 @@
+---
+- name: Install Containerd and Kubernetes Software Components
+  hosts: new_cluster_nodes
+  become: true
+  tasks:
+    - name: Purge any old or broken tracking repository configurations completely
+      ansible.builtin.file:
+        path: "/etc/yum.repos.d/{{ item }}"
+        state: absent
+      loop:
+        - fedora-containerd.repo
+        - docker-ce.repo
+        - kubernetes.repo
+
+    - name: Force purge the local package manager metadata cache databases
+      ansible.builtin.command: "dnf clean all"
+      changed_when: true
+
+    - name: Install required baseline system packages
+      ansible.builtin.dnf:
+        name:
+          - yum-utils
+          - device-mapper-persistent-data
+          - lvm2
+        state: present
+
+    - name: Configure official Docker CentOS 9 ARM64 package repository map
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/docker-ce.repo
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [docker-ce-stable]
+          name=Docker CE Stable - aarch64
+          baseurl=https://download.docker.com/linux/centos/9/aarch64/stable
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://download.docker.com/linux/centos/gpg
+
+    - name: Configure official Kubernetes package repository map
+      ansible.builtin.copy:
+        dest: /etc/yum.repos.d/kubernetes.repo
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [kubernetes]
+          name=Kubernetes stable
+          baseurl=https://pkgs.k8s.io/core:/stable:/v1.32/rpm/
+          enabled=1
+          gpgcheck=1
+          gpgkey=https://pkgs.k8s.io/core:/stable:/v1.32/rpm/repodata/repomd.xml.key
+          exclude=kubelet kubeadm kubectl
+
+    - name: Install Kubernetes and Container Runtime packages concurrently
+      ansible.builtin.dnf:
+        name:
+          - containerd.io
+          - cri-tools
+          - kubelet
+          - kubeadm
+          - kubectl
+        state: present
+        disable_excludes: kubernetes
+        update_cache: true
+
+    - name: Ensure containerd default configuration directory exists
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: '0755'
+
+    - name: Generate default containerd configuration file mappings
+      ansible.builtin.shell: "containerd config default > /etc/containerd/config.toml"
+      changed_when: true
+
+    - name: Configure containerd to use SystemdCgroup (Strict K8s requirement)
+      ansible.builtin.replace:
+        path: /etc/containerd/config.toml
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      notify: Restart containerd
+
+    - name: Ensure containerd service is enabled and running
+      ansible.builtin.systemd_service:
+        name: containerd
+        state: started
+        enabled: true
+
+    - name: Enable kubelet service to ensure it starts automatically on boot
+      ansible.builtin.systemd_service:
+        name: kubelet
+        enabled: true
+
+  handlers:
+    - name: Restart containerd
+      ansible.builtin.systemd_service:
+        name: containerd
+        state: restarted

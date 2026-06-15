@@ -1,0 +1,47 @@
+---
+- name: Bulk Provision Kubernetes Nodes in VMware Fusion
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    template_path: "/Users/andrew/Virtual Machines.localized/CentOS9aarch64.vmwarevm/CentOS9aarch64.vmx"
+
+    k8s_nodes:
+      - { name: "k8s-control-01", cpus: "2", ram: "4096" }
+      - { name: "k8s-control-02", cpus: "2", ram: "4096" }
+      - { name: "k8s-control-03", cpus: "2", ram: "4096" }
+      - { name: "k8s-worker-01",  cpus: "2", ram: "2048" }
+      - { name: "k8s-worker-02",  cpus: "2", ram: "2048" }
+      - { name: "k8s-worker-03",  cpus: "2", ram: "2048" }
+
+  tasks:
+    - name: Ensure clean destination directories exist
+      ansible.builtin.file:
+        path: "/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm"
+        state: absent
+      loop: "{{ k8s_nodes }}"
+
+    - name: Clone the VMware template natively using vmrun
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" clone "{{ template_path }}" "/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx" full'
+      loop: "{{ k8s_nodes }}"
+
+    - name: Rewrite VMware GUI display name string inside vmx file
+      ansible.builtin.command: "sed -i '' 's/^displayName =.*/displayName = \"{{ item.name }}\"/g' \"/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx\""
+      loop: "{{ k8s_nodes }}"
+
+    - name: Inject custom vCPU allocations into vmx file
+      ansible.builtin.command: "sed -i '' 's/^numvcpus =.*/numvcpus = \"{{ item.cpus }}\"/g' \"/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx\""
+      loop: "{{ k8s_nodes }}"
+
+    - name: Inject custom Memory allocations into vmx file
+      ansible.builtin.command: "sed -i '' 's/^memsize =.*/memsize = \"{{ item.ram }}\"/g' \"/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx\""
+      loop: "{{ k8s_nodes }}"
+
+    - name: Power on all Kubernetes nodes inside VMware Fusion
+      ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" start "/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx" gui'
+      loop: "{{ k8s_nodes }}"
+
+    - name: Notify next orchestration sequence
+      ansible.builtin.debug:
+        msg: "All 6 Kubernetes nodes are booting with customized vCPU and RAM allocations. Proceeding to network loops."

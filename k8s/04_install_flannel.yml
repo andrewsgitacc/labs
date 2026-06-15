@@ -1,0 +1,80 @@
+---
+- name: Install Flannel CNI
+  hosts: k8s-control-01.lab.local
+  become: true
+  vars:
+    pod_network_cidr: 10.244.0.0/16
+
+  tasks:
+    - name: Remove Cilium if installed
+      ansible.builtin.command: >
+        helm uninstall cilium -n kube-system
+      failed_when: false
+      changed_when: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    - name: Wait for Cilium pods to be removed
+      ansible.builtin.command: >
+        kubectl wait --for=delete pod
+        --selector=k8s-app=cilium
+        --namespace=kube-system
+        --timeout=60s
+      failed_when: false
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    - name: Remove any cached Flannel manifest
+      ansible.builtin.file:
+        path: /tmp/kube-flannel.yml
+        state: absent
+
+    - name: Download Flannel manifest
+      ansible.builtin.get_url:
+        url: https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml
+        dest: /tmp/kube-flannel.yml
+        mode: '0644'
+
+    - name: Apply Flannel manifest
+      ansible.builtin.command: >
+        kubectl apply -f /tmp/kube-flannel.yml
+      changed_when: true
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    - name: Wait for Flannel pods to be ready
+      ansible.builtin.command: >
+        kubectl wait --for=condition=ready pod
+        --selector=app=flannel
+        --namespace=kube-flannel
+        --timeout=120s
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    - name: Wait for all nodes to reach Ready state
+      ansible.builtin.command: >
+        kubectl wait --for=condition=ready node
+        --all
+        --timeout=180s
+      changed_when: false
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    - name: Show final node status
+      ansible.builtin.command: kubectl get nodes -o wide
+      changed_when: false
+      register: node_status
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+        PATH: "/usr/local/bin:/usr/bin:/bin"
+
+    - name: Print node status
+      ansible.builtin.debug:
+        var: node_status.stdout_lines

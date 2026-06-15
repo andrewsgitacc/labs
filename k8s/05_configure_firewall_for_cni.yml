@@ -1,0 +1,55 @@
+---
+# Fixes kube-proxy ClusterIP/DNS failures on CentOS Stream 9.
+#
+# Root cause: kube-proxy's first startup (with mode: "") writes NAT rules to
+# the legacy xt_tables kernel module. After switching to mode: "iptables"
+# (which uses iptables-nft on CentOS 9), kube-proxy writes fresh rules to
+# nftables instead — but the stale legacy rules remain in the kernel and
+# intercept packets first, so the nft DNAT rules never fire and all
+# ClusterIP traffic (including DNS via 10.96.0.10) silently drops.
+#
+# Fix: disable firewalld (lab environment) and reboot all nodes to clear
+# the in-memory legacy xt_tables. kube-proxy reinitialises cleanly on boot
+# writing only to nftables, with no legacy rules to interfere.
+
+- name: Disable firewalld and reboot all cluster nodes
+  hosts: new_cluster_nodes
+  become: true
+  serial: 1
+
+  tasks:
+    - name: Stop firewalld
+      ansible.builtin.systemd_service:
+        name: firewalld
+        state: stopped
+      failed_when: false
+
+    - name: Disable firewalld permanently
+      ansible.builtin.systemd_service:
+        name: firewalld
+        enabled: false
+      failed_when: false
+
+    - name: Reboot node to clear legacy xt_tables
+      ansible.builtin.reboot:
+        reboot_timeout: 300
+        post_reboot_delay: 15
+
+- name: Force kube-proxy to resync its iptables rules
+  hosts: k8s-control-01.lab.local
+  become: false
+
+  tasks:
+    - name: Rollout restart kube-proxy DaemonSet
+      ansible.builtin.command: >
+        kubectl rollout restart daemonset kube-proxy -n kube-system
+      environment:
+        KUBECONFIG: /home/admin/.kube/config
+      changed_when: true
+
+    - name: Wait for kube-proxy rollout to complete
+      ansible.builtin.command: >
+        kubectl rollout status daemonset kube-proxy -n kube-system --timeout=120s
+      environment:
+        KUBECONFIG: /home/admin/.kube/config
+      changed_when: false

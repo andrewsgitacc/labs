@@ -1,0 +1,20 @@
+---
+# Part 1: Provision the hardware inside VMware environment
+- import_playbook: provision_dns_vm.yml
+
+# Part 2: Map the temporary runtime inventory block
+- hosts: localhost
+  gather_facts: false
+  connection: local  
+  tasks:
+    - name: Register new VM to host group
+      ansible.builtin.add_host:
+        name: "172.16.79.128"
+        groups: dns_servers
+        ansible_user: "admin"
+        # Bypasses SSH host signature checks for fresh local clones
+        ansible_ssh_common_args: "-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+
+# Part 3: Apply system-level network configurations
+- import_playbook: configure_dns_server.yml
+

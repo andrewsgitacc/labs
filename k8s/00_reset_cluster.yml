@@ -1,0 +1,60 @@
+---
+- name: Reset all cluster nodes
+  hosts: new_cluster_nodes
+  become: true
+  tasks:
+    - name: Reset kubeadm
+      ansible.builtin.command: kubeadm reset -f
+      changed_when: true
+      failed_when: false
+
+    - name: Stop kubelet
+      ansible.builtin.systemd_service:
+        name: kubelet
+        state: stopped
+      failed_when: false
+
+    - name: Remove CNI configuration
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/cni/net.d
+        - /var/lib/cni
+        - /var/lib/flannel
+        - /run/flannel
+
+    - name: Remove network interfaces
+      ansible.builtin.shell: |
+        ip link delete cni0 2>/dev/null || true
+        ip link delete flannel.1 2>/dev/null || true
+        ip link delete cilium_host 2>/dev/null || true
+        ip link delete cilium_net 2>/dev/null || true
+      changed_when: true
+
+    - name: Flush iptables
+      ansible.builtin.shell: |
+        iptables -F
+        iptables -t nat -F
+        iptables -t mangle -F
+        iptables -X
+        iptables -t nat -X
+        iptables -t mangle -X
+      changed_when: true
+
+    - name: Remove kubeconfig files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /root/.kube
+        - /home/admin/.kube
+
+    - name: Remove Cilium state
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /var/lib/cilium
+        - /etc/cni/net.d/05-cilium.conflist
+      failed_when: false
