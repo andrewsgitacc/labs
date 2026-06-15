@@ -2,7 +2,7 @@
 
 **Author:** Andrew Kyle — [LinkedIn](https://www.linkedin.com/in/andrew-kyle-1007591/)
 
-Deploys a 2-control-plane, 3-worker Kubernetes cluster on VMware Fusion using Ansible.
+Deploys a 3-control-plane, 3-worker Kubernetes cluster on VMware Fusion using Ansible.
 
 ## Note
 
@@ -14,7 +14,7 @@ VMware Fusion uses NAT networking — you can't change vSwitch security policies
 - VM template: `CentOS9aarch64`
   - User account with sudo access: `admin`
   - Password: `admin` *(lab only)*
-- Ansible (on MacBook)
+- Ansible (on Mac)
 - DNS server deployed — see `labs/dns`
 
 ## Deployment
@@ -29,23 +29,23 @@ Run playbooks in order:
 ```bash
 # 1. Deploy and configure VMs
 #    When prompted: enter admin password, root password, and select "I Copied It" if asked
-ansible-playbook configure_k8s_cluster.yml -k -K
+ansible-playbook 01_configure_k8s_cluster.yml -k -K
 
 # 2. Install k8s software on all nodes
-ansible-playbook -i k8s_inventory.ini install_k8s_software.yml -k -K
+ansible-playbook -i k8s_inventory.ini 02_install_k8s_software.yml -k -K
 
 # 3. Initialise the control plane
-ansible-playbook -i k8s_inventory.ini 02_init_control_plane.yml -k -K
+ansible-playbook -i k8s_inventory.ini 03_init_control_plane.yml -k -K
 
 # 4. Join worker and second control plane nodes
-ansible-playbook -i k8s_inventory.ini 03_join_nodes.yml -k -K
+ansible-playbook -i k8s_inventory.ini 04_join_nodes.yml -k -K
 
 # 5. Install Flannel CNI (VXLAN backend — Cilium has limitations on VMware Fusion)
-ansible-playbook -i k8s_inventory.ini 04_install_flannel.yml -k -K
+ansible-playbook -i k8s_inventory.ini 05_install_flannel.yml -k -K
 
 # 6. Configure firewall for CNI
 #    Fixes kube-proxy ClusterIP failures caused by legacy xt_tables on CentOS Stream 9
-ansible-playbook -i k8s_inventory.ini 05_configure_firewall_for_cni.yml -k -K
+ansible-playbook -i k8s_inventory.ini 06_configure_firewall_for_cni.yml -k -K
 ```
 
 ## Verification
@@ -53,16 +53,10 @@ ansible-playbook -i k8s_inventory.ini 05_configure_firewall_for_cni.yml -k -K
 SSH to a control node:
 
 ```bash
-ssh -q -l admin 172.16.79.21
-```
-
-Or via round-robin DNS:
-
-```bash
 ssh -q -l admin "$(dig @172.16.79.10 k8s-api.lab.local +short | tail -1)"
 ```
 
-### Check all nodes are Ready
+### Check all nodes are Ready - run on the control node
 
 ```bash
 kubectl get nodes -o wide
@@ -71,12 +65,13 @@ kubectl get nodes -o wide
 Expected output:
 
 ```
-NAME                       STATUS   ROLES           AGE   VERSION    INTERNAL-IP
-k8s-control-01.lab.local   Ready    control-plane   ...   v1.32.13   172.16.79.21
-k8s-control-02.lab.local   Ready    control-plane   ...   v1.32.13   172.16.79.22
-k8s-worker-01.lab.local    Ready    <none>          ...   v1.32.13   172.16.79.31
-k8s-worker-02.lab.local    Ready    <none>          ...   v1.32.13   172.16.79.32
-k8s-worker-03.lab.local    Ready    <none>          ...   v1.32.13   172.16.79.33
+NAME                       STATUS   ROLES           AGE   VERSION    INTERNAL-IP    EXTERNAL-IP   OS-IMAGE          KERNEL-VERSION           CONTAINER-RUNTIME
+k8s-control-01.lab.local   Ready    control-plane   12h   v1.32.13   172.16.79.21   <none>        CentOS Stream 9   5.14.0-710.el9.aarch64   containerd://2.2.4
+k8s-control-02.lab.local   Ready    control-plane   11h   v1.32.13   172.16.79.22   <none>        CentOS Stream 9   5.14.0-710.el9.aarch64   containerd://2.2.4
+k8s-control-03.lab.local   Ready    control-plane   11h   v1.32.13   172.16.79.23   <none>        CentOS Stream 9   5.14.0-710.el9.aarch64   containerd://2.2.4
+k8s-worker-01.lab.local    Ready    <none>          11h   v1.32.13   172.16.79.31   <none>        CentOS Stream 9   5.14.0-710.el9.aarch64   containerd://2.2.4
+k8s-worker-02.lab.local    Ready    <none>          11h   v1.32.13   172.16.79.32   <none>        CentOS Stream 9   5.14.0-710.el9.aarch64   containerd://2.2.4
+k8s-worker-03.lab.local    Ready    <none>          11h   v1.32.13   172.16.79.33   <none>        CentOS Stream 9   5.14.0-710.el9.aarch64   containerd://2.2.4
 ```
 
 ## Tests
@@ -96,6 +91,7 @@ kubectl cluster-info
 ```bash
 kubectl run test-pod --image=nginx
 kubectl get pod test-pod
+kubectl wait --for=condition=ready pod/test-pod --timeout=60s
 kubectl exec -it test-pod -- curl localhost
 kubectl delete pod test-pod
 ```
@@ -123,11 +119,12 @@ kubectl delete deployment nginx && kubectl delete service nginx
 kubectl run storage-test --image=busybox --rm -it --restart=Never -- sh -c "echo hello > /tmp/test && cat /tmp/test"
 ```
 
-### DNS test suite
+### DNS test suite - run from Mac
 
 ```bash
-scp dns_test.sh admin@"$(dig @172.16.79.10 k8s-api.lab.local +short | tail -1)":
-ssh -q -l admin "$(dig @172.16.79.10 k8s-api.lab.local +short | tail -1)" bash dns_test.sh
+control_server=`dig @172.16.79.10 k8s-api.lab.local +short | tail -1`
+scp -q dns_test.sh admin@$control_server:
+ssh -q -l admin $control_server bash dns_test.sh
 ```
 
 ### Rolling update
@@ -169,7 +166,7 @@ kubectl delete deployment nginx && kubectl delete service nginx
 kubectl get pods -n kube-flannel -o wide
 kubectl logs -n kube-flannel -l app=flannel | tail -20
 
-# Run from MacBook — each node should have routes to other nodes' pod CIDRs
+# Run from Mac — each node should have routes to other nodes' pod CIDRs
 ssh -q -t admin@172.16.79.31 "ip route | grep 10.244"
 ```
 

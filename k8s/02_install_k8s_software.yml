@@ -17,12 +17,9 @@
       changed_when: true
 
     - name: Install required baseline system packages
-      ansible.builtin.dnf:
-        name:
-          - yum-utils
-          - device-mapper-persistent-data
-          - lvm2
-        state: present
+      ansible.builtin.shell: dnf install -y yum-utils device-mapper-persistent-data lvm2
+      register: dnf_baseline
+      changed_when: "'Nothing to do' not in dnf_baseline.stdout"
 
     - name: Configure official Docker CentOS 9 ARM64 package repository map
       ansible.builtin.copy:
