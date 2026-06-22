@@ -49,14 +49,15 @@ The playbook will:
 Run once after provisioning so Jenkins can clone from GitHub:
 
 ```bash
-ssh -q -t -l admin 172.16.79.60 \
+ssh -q -t -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)" \
   "sudo -u jenkins ssh-keyscan github.com | sudo tee -a /var/lib/jenkins/.ssh/known_hosts"
 ```
 
 ### 2. Unlock Jenkins
 
 ```bash
-ssh -q -t -l admin 172.16.79.60 "sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
+ssh -q -t -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)" \
+  "sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
 ```
 
 Open **http://172.16.79.60:8080** in a browser, paste the password, and choose **Install suggested plugins**.
@@ -90,13 +91,13 @@ Jenkins polls GitHub every 5 minutes and triggers automatically on new commits.
 
 ```bash
 # SSH
-ssh -q -l admin jenkins.lab.local
+ssh -q -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)"
 
 # Restart Jenkins
-ssh -q -t -l admin jenkins.lab.local "sudo systemctl restart jenkins"
+ssh -q -t -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)" "sudo systemctl restart jenkins"
 
 # View logs
-ssh -q -t -l admin jenkins.lab.local "sudo journalctl -u jenkins -f"
+ssh -q -t -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)" "sudo journalctl -u jenkins -f"
 ```
 
 Ad-hoc Ansible against the static inventory:
