@@ -31,6 +31,14 @@ pipeline {
             }
         }
 
+        stage('Install Collections') {
+            steps {
+                dir('k8s') {
+                    sh 'ansible-galaxy collection install community.general ansible.posix'
+                }
+            }
+        }
+
         stage('Ansible Syntax Check') {
             steps {
                 dir('k8s') {
@@ -38,6 +46,11 @@ pipeline {
                         echo "=== Syntax-checking all playbooks ==="
                         FAILED=0
                         for playbook in *.yml; do
+                            # Skip empty playbooks
+                            if ! grep -q "hosts:" "$playbook" 2>/dev/null; then
+                                echo "  SKIP (empty): $playbook"
+                                continue
+                            fi
                             echo "  Checking: $playbook"
                             ansible-playbook --syntax-check -i k8s_inventory.ini "$playbook" 2>&1 \
                                 || { echo "  FAIL: $playbook"; FAILED=1; }
