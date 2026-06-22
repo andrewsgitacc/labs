@@ -14,9 +14,12 @@ warn_list:
   - yaml[line-length]       # long lines are fine in playbooks
 
 skip_list:
-  - no-changed-when         # many lab tasks don't need changed_when
-  - command-instead-of-module  # shell/command use is common in lab scripts
-  - role-name               # no roles in this repo
+  - no-changed-when             # many lab tasks don't need changed_when
+  - command-instead-of-module   # shell/command use is common in lab scripts
+  - command-instead-of-shell    # shell module used intentionally in lab scripts
+  - role-name                   # no roles in this repo
+  - name[play]                  # unnamed plays acceptable in lab playbooks
+  - yaml[commas]                # formatting — not enforced in lab context
 
 # Offline mode — don't download rules or galaxy requirements during CI
 offline: false
