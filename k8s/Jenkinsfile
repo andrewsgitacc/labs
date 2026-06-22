@@ -1,0 +1,69 @@
+pipeline {
+    agent any
+
+    triggers {
+        // Poll GitHub every 5 minutes (webhooks require a public URL)
+        pollSCM('H/5 * * * *')
+    }
+
+    environment {
+        ANSIBLE_FORCE_COLOR = '1'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Check Dependencies') {
+            steps {
+                sh '''
+                    echo "=== Tool versions ==="
+                    ansible --version | head -1
+                    ansible-lint --version
+                    python3 --version
+                '''
+            }
+        }
+
+        stage('Ansible Syntax Check') {
+            steps {
+                sh '''
+                    echo "=== Syntax-checking all playbooks ==="
+                    FAILED=0
+                    for playbook in *.yml; do
+                        # Skip playbooks that need a live inventory to resolve vars
+                        # (syntax-check with inventory catches most structural errors)
+                        echo "  Checking: $playbook"
+                        ansible-playbook --syntax-check -i k8s_inventory.ini "$playbook" 2>&1 \
+                            || { echo "  FAIL: $playbook"; FAILED=1; }
+                    done
+                    exit $FAILED
+                '''
+            }
+        }
+
+        stage('Ansible Lint') {
+            steps {
+                sh 'ansible-lint'
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo "All playbooks passed lint and syntax checks."
+        }
+        failure {
+            echo "Pipeline failed — review lint output above and fix flagged issues."
+        }
+        always {
+            // Clean workspace to avoid stale files on next run
+            cleanWs()
+        }
+    }
+}

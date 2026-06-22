@@ -1,0 +1,26 @@
+# ansible-lint configuration for lab environments
+# Docs: https://ansible.readthedocs.io/projects/lint/configuring/
+
+profile: moderate
+
+# Paths to lint
+lint_paths:
+  - "*.yml"
+
+# Exclude files that aren't playbooks
+exclude_paths:
+  - .cache/
+  - .git/
+
+# Rules to skip — relaxed for a lab where plain-text passwords and
+# direct root access are acceptable tradeoffs
+warn_list:
+  - yaml[line-length]       # long lines are fine in playbooks
+
+skip_list:
+  - no-changed-when         # many lab tasks don't need changed_when
+  - command-instead-of-module  # shell/command use is common in lab scripts
+  - role-name               # no roles in this repo
+
+# Offline mode — don't download rules or galaxy requirements during CI
+offline: false
