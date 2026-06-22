@@ -3,10 +3,6 @@
 
 profile: moderate
 
-# Paths to lint
-lint_paths:
-  - "*.yml"
-
 # Exclude files that aren't playbooks
 exclude_paths:
   - .cache/
