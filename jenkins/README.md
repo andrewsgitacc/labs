@@ -1,94 +1,114 @@
-# Jenkins Setup — VM-Based (Ansible)
+# Jenkins Lab
 
-Jenkins runs on a dedicated CentOS Stream 9 VM at `172.16.79.60` (`jenkins.lab.local`), provisioned and configured entirely by Ansible from your MacBook.
+**Author:** Andrew Kyle — [LinkedIn](https://www.linkedin.com/in/andrew-kyle-1007591/)
 
-## Prerequisites
+Deploys a Jenkins CI/CD server on a CentOS Stream 9 VM in VMware Fusion using Ansible. Jenkins runs on `172.16.79.60` (`jenkins.lab.local`) and serves as a central CI server for all labs.
 
-- `CentOS9aarch64` VMware Fusion template exists
-- DNS server at `172.16.79.10` has an A record for `jenkins.lab.local → 172.16.79.60` (see note below)
-- Ansible installed on your MacBook (`brew install ansible`)
-- Community and POSIX collections installed:
+## Requirements
+
+- VMware Fusion with `CentOS9aarch64` template
+  - User account with sudo access: `admin`
+  - Password: `admin` *(lab only)*
+- Ansible on MacBook (`brew install ansible`)
+- Ansible collections:
   ```bash
   ansible-galaxy collection install community.general ansible.posix
   ```
+- DNS server deployed — see `labs/dns`
 
-## Deploy
+## DNS
 
-Run the master playbook from your MacBook. It will clone the VM, wait for it to boot, discover its DHCP IP, configure networking, and install Jenkins in one pass.
+The `jenkins.lab.local` A record is defined in `labs/dns/configure_dns_server.yml`. Re-run that playbook before provisioning Jenkins if your DNS server was rebuilt:
+
+```bash
+cd labs/dns
+ansible-playbook configure_dns_server.yml -k -K
+```
+
+## Deployment
 
 ```bash
 ansible-playbook configure_jenkins.yml -k -K
 ```
 
-When prompted:
-- `-k` → SSH password (`admin`)
-- `-K` → sudo password (`admin`)
+When prompted, enter `admin` for both the SSH password (`-k`) and sudo password (`-K`).
 
-> **Note:** The playbook applies a static IP (`172.16.79.60`) then drops the connection — this is expected. Jenkins will be reachable at the static IP once it completes.
+The playbook will:
+1. Clone the `CentOS9aarch64` template and power on the VM
+2. Discover the DHCP IP and connect over SSH
+3. Set the hostname to `jenkins.lab.local`
+4. Install Java 21, Git, Ansible, ansible-lint, and Jenkins LTS
+5. Open port 8080 in firewalld
+6. Start and enable the Jenkins service
+7. Set the static IP `172.16.79.60` and drop the connection *(expected)*
 
-## Unlock Jenkins
+## Post-Deploy Setup
 
-SSH into the VM and grab the initial admin password:
+### 1. Trust GitHub's host key
+
+Run once after provisioning so Jenkins can clone from GitHub:
 
 ```bash
-ssh -q -l admin 172.16.79.60
-sudo cat /var/lib/jenkins/secrets/initialAdminPassword
+ssh -q -t -l admin 172.16.79.60 \
+  "sudo -u jenkins ssh-keyscan github.com | sudo tee -a /var/lib/jenkins/.ssh/known_hosts"
 ```
 
-Open **http://172.16.79.60:8080** in a browser and paste the password.
+### 2. Unlock Jenkins
 
-Choose **"Install suggested plugins"** when prompted.
+```bash
+ssh -q -t -l admin 172.16.79.60 "sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
+```
 
-## Create the Pipeline Job
+Open **http://172.16.79.60:8080** in a browser, paste the password, and choose **Install suggested plugins**.
 
-1. **New Item** → name it (e.g., `k8s-cluster`) → select **Pipeline** → OK
-2. Under **Pipeline**:
-   - Definition: `Pipeline script from SCM`
-   - SCM: `Git`
-   - Repository URL: `git@github.com:andrewsgitacc/labs.git`
-   - Branch: `*/main`
-   - Script Path: `k8s/Jenkinsfile` *(adjust to match your repo layout)*
-3. Save
+> **Note:** Chrome may fail to reach the Jenkins UI due to VMware NAT subnet routing. Use Safari if Chrome shows `ERR_ADDRESS_UNREACHABLE`.
 
-## Add Your SSH Key to Jenkins
+### 3. Add GitHub SSH key
 
-Jenkins needs to authenticate to GitHub over SSH:
+Jenkins authenticates to GitHub over SSH:
 
 1. **Manage Jenkins → Credentials → (global) → Add Credentials**
 2. Kind: `SSH Username with private key`
 3. Username: `git`
-4. Private Key: paste the contents of `~/.ssh/id_ed25519` (or whichever key GitHub knows)
-5. Reference this credential in the pipeline job under **Credentials**
+4. Private Key: paste the contents of `~/.ssh/id_github`
 
-## Trigger a Build
+### 4. Create a Pipeline Job
 
-Click **Build Now** on the pipeline job. On subsequent pushes, Jenkins polls GitHub every 5 minutes automatically (configured in the `Jenkinsfile`).
+1. **New Item** → name it (e.g., `k8s-cluster`) → **Pipeline** → OK
+2. Under **Pipeline**:
+   - Definition: `Pipeline script from SCM`
+   - SCM: `Git`
+   - Repository URL: `git@github.com:andrewsgitacc/labs.git`
+   - Credentials: select the `git` credential added above
+   - Branch: `*/main`
+   - Script Path: `k8s/Jenkinsfile` *(adjust per lab)*
+3. Save → **Build Now**
+
+Jenkins polls GitHub every 5 minutes and triggers automatically on new commits.
 
 ## Day-2 Operations
 
 ```bash
-# SSH directly
+# SSH
 ssh -q -l admin jenkins.lab.local
 
 # Restart Jenkins
-ssh -q -l admin jenkins.lab.local "sudo systemctl restart jenkins"
+ssh -q -t -l admin jenkins.lab.local "sudo systemctl restart jenkins"
 
 # View logs
-ssh -q -l admin jenkins.lab.local "sudo journalctl -u jenkins -f"
+ssh -q -t -l admin jenkins.lab.local "sudo journalctl -u jenkins -f"
 ```
 
-Or use the static inventory for ad-hoc Ansible commands:
+Ad-hoc Ansible against the static inventory:
 
 ```bash
 ansible -i jenkins_inventory.ini jenkins -m command -a "systemctl status jenkins" -b -k -K
 ```
 
-## Reusing for Other Labs
+## Adding a New Lab
 
-For each new lab repo:
+1. Add a `Jenkinsfile` to the lab repo (copy from `k8s/Jenkinsfile` and adapt)
+2. Add a `.ansible-lint` config if the lab uses Ansible playbooks
+3. Create a new Pipeline job in Jenkins pointing at the new repo path
 
-1. Add a `Jenkinsfile` at the repo root (copy and adapt the one in this repo)
-2. Add a `.ansible-lint` config if the lab uses Ansible
-3. Create a new Pipeline job in Jenkins pointing at the new repo
-
-Jenkins on the VM handles all lab pipelines centrally — no per-project CI infrastructure needed.
+Jenkins on this VM handles all lab pipelines centrally.
