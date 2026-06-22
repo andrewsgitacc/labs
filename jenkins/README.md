@@ -35,7 +35,7 @@ ssh -q -l admin 172.16.79.60
 sudo cat /var/lib/jenkins/secrets/initialAdminPassword
 ```
 
-Open **http://172.16.79.60:8080** in safari (don't use chrome) and paste the password.
+Open **http://172.16.79.60:8080** in a browser and paste the password.
 
 Choose **"Install suggested plugins"** when prompted.
 
