@@ -20,35 +20,39 @@ pipeline {
 
         stage('Check Dependencies') {
             steps {
-                sh '''
-                    echo "=== Tool versions ==="
-                    ansible --version | head -1
-                    ansible-lint --version
-                    python3 --version
-                '''
+                dir('k8s') {
+                    sh '''
+                        echo "=== Tool versions ==="
+                        ansible --version | head -1
+                        ansible-lint --version
+                        python3 --version
+                    '''
+                }
             }
         }
 
         stage('Ansible Syntax Check') {
             steps {
-                sh '''
-                    echo "=== Syntax-checking all playbooks ==="
-                    FAILED=0
-                    for playbook in *.yml; do
-                        # Skip playbooks that need a live inventory to resolve vars
-                        # (syntax-check with inventory catches most structural errors)
-                        echo "  Checking: $playbook"
-                        ansible-playbook --syntax-check -i k8s_inventory.ini "$playbook" 2>&1 \
-                            || { echo "  FAIL: $playbook"; FAILED=1; }
-                    done
-                    exit $FAILED
-                '''
+                dir('k8s') {
+                    sh '''
+                        echo "=== Syntax-checking all playbooks ==="
+                        FAILED=0
+                        for playbook in *.yml; do
+                            echo "  Checking: $playbook"
+                            ansible-playbook --syntax-check -i k8s_inventory.ini "$playbook" 2>&1 \
+                                || { echo "  FAIL: $playbook"; FAILED=1; }
+                        done
+                        exit $FAILED
+                    '''
+                }
             }
         }
 
         stage('Ansible Lint') {
             steps {
-                sh 'ansible-lint'
+                dir('k8s') {
+                    sh 'ansible-lint'
+                }
             }
         }
 
