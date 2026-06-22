@@ -1,0 +1,47 @@
+---
+- name: Provision Jenkins Node in VMware Fusion
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    template_path: "/Users/andrew/Virtual Machines.localized/CentOS9aarch64.vmwarevm/CentOS9aarch64.vmx"
+    vm_name: "jenkins"
+
+  tasks:
+    - name: Ensure clean destination directory exists
+      ansible.builtin.file:
+        path: "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm"
+        state: absent
+
+    - name: Clone the VMware template natively using vmrun
+      ansible.builtin.command: >
+        "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+        clone "{{ template_path }}"
+        "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx"
+        full
+
+    - name: Rewrite VMware GUI display name inside vmx file
+      ansible.builtin.command: >
+        sed -i '' 's/^displayName =.*/displayName = "{{ vm_name }}"/g'
+        "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx"
+
+    - name: Set vCPU count to 2
+      ansible.builtin.command: >
+        sed -i '' 's/^numvcpus =.*/numvcpus = "2"/g'
+        "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx"
+
+    - name: Set RAM to 4096 MB
+      ansible.builtin.command: >
+        sed -i '' 's/^memsize =.*/memsize = "4096"/g'
+        "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx"
+
+    - name: Power on the Jenkins VM
+      ansible.builtin.command: >
+        "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+        start "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx"
+        gui
+
+    - name: Notify next orchestration sequence
+      ansible.builtin.debug:
+        msg: "Jenkins VM is booting. Proceeding to IP discovery."

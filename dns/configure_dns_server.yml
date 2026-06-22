@@ -116,18 +116,19 @@
         content: |
           $TTL 86400
           @   IN  SOA {{ dns_hostname }} admin.{{ domain_name }}. (
-                  2026061201 ; Serial
+                  2026062201 ; Serial
                   3600       ; Refresh
                   1800       ; Retry
                   604800     ; Expire
                   86400 )    ; Minimum TTL
           @   IN  NS  {{ dns_hostname }}
-          dns IN  A   {{ dns_server_ip }}
-          router IN A   172.16.79.2
-          client IN A   172.16.79.50
-          k8s-api  IN A  172.16.79.21
-          k8s-api  IN A  172.16.79.22
-          k8s-api  IN A  172.16.79.23
+          dns            IN A   {{ dns_server_ip }}
+          router         IN A   172.16.79.2
+          client         IN A   172.16.79.50
+          jenkins        IN A   172.16.79.60
+          k8s-api        IN A   172.16.79.21
+          k8s-api        IN A   172.16.79.22
+          k8s-api        IN A   172.16.79.23
           k8s-control-01 IN A   172.16.79.21
           k8s-control-02 IN A   172.16.79.22
           k8s-control-03 IN A   172.16.79.23
@@ -145,7 +146,7 @@
         content: |
           $TTL 86400
           @   IN  SOA {{ dns_hostname }} admin.{{ domain_name }}. (
-                  2026061201 ; Serial
+                  2026062201 ; Serial
                   3600       ; Refresh
                   1800       ; Retry
                   604800     ; Expire
@@ -154,7 +155,8 @@
           10  IN  PTR {{ dns_hostname }}
           2   IN  PTR router.{{ domain_name }}.
           50  IN  PTR client.{{ domain_name }}.
-          20  IN  PTR  k8s-api.lab.local.
+          60  IN  PTR jenkins.{{ domain_name }}.
+          20  IN  PTR k8s-api.lab.local.
           21  IN  PTR k8s-control-01.lab.local.
           22  IN  PTR k8s-control-02.lab.local.
           23  IN  PTR k8s-control-03.lab.local.
@@ -196,4 +198,3 @@
       ansible.builtin.systemd_service:
         name: named
         state: restarted
-
