@@ -28,24 +28,39 @@ ansible-playbook configure_dns_server.yml -k -K
 
 ## Deployment
 
+Deployment is split into two playbooks:
+
+| Playbook | What it does | When to run it |
+|---|---|---|
+| `01_provision_jenkins.yml` | **Destructive.** Powers off and deletes any existing `jenkins` VM, re-clones it from the template, and sets the hostname and static IP | First build, or when you want a completely fresh VM |
+| `02_configure_jenkins.yml` | Installs and configures Jenkins. Never touches the VM itself, so build history is kept | After 01, and any time you change `group_vars/all.yml` (new job, plugin, password) |
+
 ```bash
-ansible-playbook configure_jenkins.yml -k -K
+cd labs/jenkins
+
+# 1. Build (or rebuild) the VM (the connection drop at the end is expected)
+ansible-playbook 01_provision_jenkins.yml -k -K
+
+# 2. Install + configure Jenkins (safe to re-run)
+ansible-playbook -i jenkins_inventory.ini 02_configure_jenkins.yml -k -K
 ```
 
 When prompted, enter `admin` for both the SSH password (`-k`) and sudo password (`-K`).
 
-The playbook will:
-1. Clone the `CentOS9aarch64` template and power on the VM
+**01_provision_jenkins.yml:**
+1. Power off any running `jenkins` VM, delete it, clone the `CentOS9aarch64` template and power on
 2. Discover the DHCP IP and connect over SSH
 3. Set the hostname to `jenkins.lab.local`
-4. Install Java 21, Git, Ansible, ansible-lint, and Jenkins LTS
-5. Open port 8080 in firewalld
-6. **Set up Jenkins unattended** (no setup wizard):
+4. Set the static IP `172.16.79.60` and drop the connection *(expected)*
+
+**02_configure_jenkins.yml:**
+1. Install Java 21, Git, Ansible, ansible-lint, and Jenkins LTS
+2. Open port 8080 in firewalld
+3. **Set up Jenkins unattended** (no setup wizard):
    - Install the plugins in `files/plugins.txt` with the official plugin installation manager
    - Copy your GitHub SSH key (`~/.ssh/id_github` on the Mac) to the VM and trust GitHub's host keys
    - Apply **Configuration as Code** (`templates/jenkins.yaml.j2`): admin user, Jenkins URL, the `github-ssh` credential, and all pipeline jobs
-7. Start Jenkins and wait until the admin login works
-8. Set the static IP `172.16.79.60` and drop the connection *(expected)*
+4. Start (or restart, if config changed) Jenkins and wait until the admin login works
 
 ## Logging In
 
@@ -76,7 +91,7 @@ Jobs created by default:
 
 `puppet-control-repo` needs the Puppet tools on this VM. Run `labs/puppet/04_configure_jenkins_for_puppet.yml` once after building Jenkins.
 
-> **Configuration as Code wins.** Jenkins re-applies `/var/lib/jenkins/casc_configs/jenkins.yaml` on every start. Anything it defines (admin user, credential, jobs) reverts to the playbook's version after a restart if you changed it in the UI. Make permanent changes in `group_vars/all.yml` or the template, then re-run the playbook (this rebuilds the VM).
+> **Configuration as Code wins.** Jenkins re-applies `/var/lib/jenkins/casc_configs/jenkins.yaml` on every start. Anything it defines (admin user, credential, jobs) reverts to the playbook's version after a restart if you changed it in the UI. Make permanent changes in `group_vars/all.yml` or the template, then re-run `02_configure_jenkins.yml`.
 
 ## Day-2 Operations
 
@@ -101,6 +116,6 @@ ansible -i jenkins_inventory.ini jenkins -m command -a "systemctl status jenkins
 
 1. Add a `Jenkinsfile` to the lab (copy from `k8s/Jenkinsfile` and adapt)
 2. Add a `.ansible-lint` config if the lab uses Ansible playbooks
-3. Add an entry to `jenkins_jobs` in `group_vars/all.yml` and re-run `configure_jenkins.yml`. This rebuilds the Jenkins VM from scratch, which is safe because everything is recreated automatically.
+3. Add an entry to `jenkins_jobs` in `group_vars/all.yml` and re-run `02_configure_jenkins.yml` (the VM and build history are kept)
 
 Jenkins on this VM handles all lab pipelines centrally.

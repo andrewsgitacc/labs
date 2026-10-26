@@ -1,0 +1,75 @@
+---
+# Provision (or RE-provision) the Jenkins VM.
+# DESTRUCTIVE: powers off and deletes any existing jenkins VM, re-clones it from
+# the CentOS9aarch64 template, then sets the hostname and static IP.
+# Jenkins itself is installed by 02_configure_jenkins.yml.
+
+# Part 1: Power off/delete any old VM, clone the template, power on
+- import_playbook: provision_jenkins_node.yml
+
+# Part 2: Discover the DHCP IP assigned by VMware Fusion
+- hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Intercept DHCP IP for jenkins
+      ansible.builtin.command: >
+        "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+        getGuestIPAddress
+        "/Users/andrew/Virtual Machines.localized/jenkins.vmwarevm/jenkins.vmx"
+      register: jenkins_ip
+      until: jenkins_ip.rc == 0 and jenkins_ip.stdout.strip() != ""
+      retries: 30
+      delay: 5
+
+    - name: Register jenkins to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ jenkins_ip.stdout.strip() }}"
+        groups: jenkins_node
+        ansible_user: "admin"
+        ansible_ssh_common_args: >-
+          -o UserKnownHostsFile=/dev/null
+          -o StrictHostKeyChecking=no
+          -o PubkeyAuthentication=no
+          -o PreferredAuthentications=password
+
+# Part 3: Hostname and static IP (connection drops at the end — expected)
+- name: Set Hostname and Static IP
+  hosts: jenkins_node
+  become: true
+  vars:
+    static_ip: "172.16.79.60/24"
+    static_gateway: "172.16.79.2"
+    dns_server: "172.16.79.10"
+    hostname: "jenkins.lab.local"
+
+  tasks:
+    - name: Set system hostname
+      ansible.builtin.hostname:
+        name: "{{ hostname }}"
+
+    - name: Set static IP via NetworkManager
+      community.general.nmcli:
+        conn_name: "{{ ansible_default_ipv4.interface }}"
+        ifname: "{{ ansible_default_ipv4.interface }}"
+        type: ethernet
+        ip4: "{{ static_ip }}"
+        gw4: "{{ static_gateway }}"
+        dns4: "{{ dns_server }}"
+        state: present
+
+    - name: Apply static IP (connection drops — this is expected)
+      ansible.builtin.shell: "sleep 2 && nmcli connection up {{ ansible_default_ipv4.interface }}"
+      async: 10
+      poll: 0
+
+- name: Next Step
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Print next step
+      ansible.builtin.debug:
+        msg: "Jenkins VM is on 172.16.79.60. Next: ansible-playbook -i jenkins_inventory.ini 02_configure_jenkins.yml -k -K"

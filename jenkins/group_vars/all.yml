@@ -1,5 +1,5 @@
 ---
-# Jenkins lab settings — used by configure_jenkins.yml
+# Jenkins lab settings — used by 02_configure_jenkins.yml
 
 jenkins_url: "http://172.16.79.60:8080/"
 

@@ -49,7 +49,7 @@ Run the playbooks in order. When prompted, enter `admin` for both the SSH passwo
 
 ```bash
 # 1. Clone 3 VMs, set hostnames, then switch to static IPs (the connection drop at the end is expected)
-ansible-playbook 01_configure_puppet_nodes.yml -k -K
+ansible-playbook 01_provision_puppet_nodes.yml -k -K
 
 # 2. Install OpenVox Server + r10k, deploy the control repo, start puppetserver
 ansible-playbook -i puppet_inventory.ini 02_install_puppet_server.yml -k -K
@@ -144,6 +144,6 @@ ansible -i puppet_inventory.ini puppet_agents -m command -a "/opt/puppetlabs/bin
 
 ## Rebuilding
 
-`01_configure_puppet_nodes.yml` deletes and re-clones **all three** VMs, so re-running the playbooks 01 to 03 gives you a fresh server with a new CA and new clients. No certificate cleanup is needed.
+`01_provision_puppet_nodes.yml` deletes and re-clones **all three** VMs, so re-running the playbooks 01 to 03 gives you a fresh server with a new CA and new clients. No certificate cleanup is needed.
 
 If you rebuild only one client by hand, clean its old certificate on the server first (see Day-2 above). Otherwise the server rejects the client's new certificate.

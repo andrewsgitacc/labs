@@ -1,4 +1,9 @@
 ---
+# Provision (or RE-provision) the Puppet lab VMs.
+# DESTRUCTIVE: powers off, deletes and re-clones puppet, puppet-client-01 and
+# puppet-client-02 from the template, then sets hostnames and static IPs.
+# Playbooks 02-04 only configure and are safe to re-run.
+
 # Part 1: Clone and power on the Puppet server and clients
 - import_playbook: provision_puppet_nodes.yml
 
