@@ -1,0 +1,26 @@
+---
+# Shared settings for the Puppet lab
+
+# VM layout — used by provisioning and IP discovery
+puppet_nodes:
+  - { name: "puppet",           fqdn: "puppet.lab.local",           ip: "172.16.79.70", cpus: "2", ram: "4096" }
+  - { name: "puppet-client-01", fqdn: "puppet-client-01.lab.local", ip: "172.16.79.71", cpus: "2", ram: "2048" }
+  - { name: "puppet-client-02", fqdn: "puppet-client-02.lab.local", ip: "172.16.79.72", cpus: "2", ram: "2048" }
+
+# Networking (VMware Fusion NAT)
+static_gateway: "172.16.79.2"
+dns_server: "172.16.79.10"
+
+# OpenVox (community fork of open-source Puppet) — EL9 release package
+openvox_release_rpm: "https://yum.voxpupuli.org/openvox8-release-el-9.noarch.rpm"
+
+# Puppet server
+puppet_server_fqdn: "puppet.lab.local"
+puppetserver_heap: "2g"
+puppet_agent_runinterval: "10m"
+
+# Control repo pulled by r10k on the Puppet server (public repo → plain HTTPS, no key)
+github_owner: "andrewsgitacc"
+control_repo_name: "puppet-control-repo"
+control_repo_url: "https://github.com/{{ github_owner }}/{{ control_repo_name }}.git"
+r10k_poll_interval: "5min"

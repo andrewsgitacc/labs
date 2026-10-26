@@ -1,0 +1,53 @@
+---
+- name: Install and Configure OpenVox Agents
+  hosts: puppet_agents
+  become: true
+
+  tasks:
+    - name: Install the OpenVox 8 yum repository
+      ansible.builtin.dnf:
+        name: "{{ openvox_release_rpm }}"
+        state: present
+        disable_gpg_check: true   # the release RPM itself carries the repo GPG key
+
+    - name: Install OpenVox Agent
+      ansible.builtin.dnf:
+        name: openvox-agent
+        state: present
+        update_cache: true
+
+    - name: Configure puppet.conf
+      community.general.ini_file:
+        path: /etc/puppetlabs/puppet/puppet.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: '0644'
+      loop:
+        - { section: main,  option: certname,    value: "{{ inventory_hostname }}" }
+        - { section: main,  option: server,      value: "{{ puppet_server_fqdn }}" }
+        - { section: agent, option: runinterval, value: "{{ puppet_agent_runinterval }}" }
+
+    - name: Check the Puppet server resolves via lab DNS
+      ansible.builtin.command: "getent hosts {{ puppet_server_fqdn }}"
+      changed_when: false
+
+    # First run: requests a cert (autosigned for *.lab.local) and applies the catalog
+    - name: First Puppet agent run (rc 2 = changes applied)
+      ansible.builtin.command: /opt/puppetlabs/bin/puppet agent --test
+      register: agent_run
+      failed_when: agent_run.rc not in [0, 2]
+      changed_when: agent_run.rc == 2
+      retries: 3
+      delay: 15
+      until: agent_run.rc in [0, 2]
+
+    - name: Enable and start the Puppet agent service
+      ansible.builtin.systemd_service:
+        name: puppet
+        state: started
+        enabled: true
+
+    - name: Show what Puppet changed
+      ansible.builtin.debug:
+        msg: "{{ agent_run.stdout_lines | select('search', 'Notice:') | list }}"

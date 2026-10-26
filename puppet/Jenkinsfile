@@ -1,0 +1,86 @@
+pipeline {
+    agent any
+
+    triggers {
+        // Poll GitHub every 5 minutes (webhooks require a public URL)
+        pollSCM('H/5 * * * *')
+    }
+
+    environment {
+        ANSIBLE_FORCE_COLOR = '1'
+    }
+
+    stages {
+
+        stage('Checkout') {
+            steps {
+                checkout scm
+            }
+        }
+
+        stage('Check Dependencies') {
+            steps {
+                dir('puppet') {
+                    sh '''
+                        echo "=== Tool versions ==="
+                        ansible --version | head -1
+                        ansible-lint --version
+                        python3 --version
+                    '''
+                }
+            }
+        }
+
+        stage('Install Collections') {
+            steps {
+                dir('puppet') {
+                    sh 'ansible-galaxy collection install community.general ansible.posix'
+                }
+            }
+        }
+
+        stage('Ansible Syntax Check') {
+            steps {
+                dir('puppet') {
+                    sh '''
+                        echo "=== Syntax-checking all playbooks ==="
+                        FAILED=0
+                        for playbook in *.yml; do
+                            # Skip empty playbooks
+                            if ! grep -q "hosts:" "$playbook" 2>/dev/null; then
+                                echo "  SKIP (empty): $playbook"
+                                continue
+                            fi
+                            echo "  Checking: $playbook"
+                            ansible-playbook --syntax-check -i puppet_inventory.ini "$playbook" 2>&1 \
+                                || { echo "  FAIL: $playbook"; FAILED=1; }
+                        done
+                        exit $FAILED
+                    '''
+                }
+            }
+        }
+
+        stage('Ansible Lint') {
+            steps {
+                dir('puppet') {
+                    sh 'ansible-lint'
+                }
+            }
+        }
+
+    }
+
+    post {
+        success {
+            echo "All playbooks passed lint and syntax checks."
+        }
+        failure {
+            echo "Pipeline failed — review lint output above and fix flagged issues."
+        }
+        always {
+            // Clean workspace to avoid stale files on next run
+            cleanWs()
+        }
+    }
+}

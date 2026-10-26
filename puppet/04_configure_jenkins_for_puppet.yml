@@ -1,0 +1,37 @@
+---
+# Adds Puppet tooling to the existing Jenkins VM (labs/jenkins) so it can
+# lint/validate the puppet-control-repo. The agent SERVICE is left disabled —
+# Jenkins only uses the CLI tools.
+
+- name: Install Puppet CI Tooling on Jenkins
+  hosts: jenkins
+  become: true
+
+  tasks:
+    - name: Install the OpenVox 8 yum repository
+      ansible.builtin.dnf:
+        name: "{{ openvox_release_rpm }}"
+        state: present
+        disable_gpg_check: true
+
+    - name: Install OpenVox Agent (for puppet parser validate + bundled Ruby)
+      ansible.builtin.dnf:
+        name: openvox-agent
+        state: present
+        update_cache: true
+
+    - name: Keep the Puppet agent service off on Jenkins
+      ansible.builtin.systemd_service:
+        name: puppet
+        state: stopped
+        enabled: false
+
+    - name: Install puppet-lint and r10k into the OpenVox bundled Ruby
+      community.general.gem:
+        name: "{{ item }}"
+        executable: /opt/puppetlabs/puppet/bin/gem
+        user_install: false
+        state: present
+      loop:
+        - puppet-lint
+        - r10k

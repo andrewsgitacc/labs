@@ -1,0 +1,51 @@
+---
+- name: Provision Puppet Nodes in VMware Fusion
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    template_path: "/Users/andrew/Virtual Machines.localized/CentOS9aarch64.vmwarevm/CentOS9aarch64.vmx"
+    vm_dir: "/Users/andrew/Virtual Machines.localized"
+    vmrun: "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+
+  tasks:
+    - name: Ensure clean destination directories exist
+      ansible.builtin.file:
+        path: "{{ vm_dir }}/{{ item.name }}.vmwarevm"
+        state: absent
+      loop: "{{ puppet_nodes }}"
+
+    - name: Clone the VMware template natively using vmrun
+      ansible.builtin.command: >
+        "{{ vmrun }}" clone "{{ template_path }}"
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx"
+        full
+      loop: "{{ puppet_nodes }}"
+
+    - name: Rewrite VMware GUI display name inside vmx file
+      ansible.builtin.command: >
+        sed -i '' 's/^displayName =.*/displayName = "{{ item.name }}"/g'
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx"
+      loop: "{{ puppet_nodes }}"
+
+    - name: Inject custom vCPU allocations into vmx file
+      ansible.builtin.command: >
+        sed -i '' 's/^numvcpus =.*/numvcpus = "{{ item.cpus }}"/g'
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx"
+      loop: "{{ puppet_nodes }}"
+
+    - name: Inject custom Memory allocations into vmx file
+      ansible.builtin.command: >
+        sed -i '' 's/^memsize =.*/memsize = "{{ item.ram }}"/g'
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx"
+      loop: "{{ puppet_nodes }}"
+
+    - name: Power on all Puppet nodes inside VMware Fusion
+      ansible.builtin.command: >
+        "{{ vmrun }}" start "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx" gui
+      loop: "{{ puppet_nodes }}"
+
+    - name: Notify next orchestration sequence
+      ansible.builtin.debug:
+        msg: "{{ puppet_nodes | length }} Puppet nodes are booting. Proceeding to IP discovery."

@@ -1,0 +1,71 @@
+---
+# Part 1: Clone and power on the Puppet server and clients
+- import_playbook: provision_puppet_nodes.yml
+
+# Part 2: Discover the DHCP IP assigned by VMware Fusion to each VM
+- hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  tasks:
+    - name: Intercept DHCP IP for each Puppet node
+      ansible.builtin.command: >
+        "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+        getGuestIPAddress
+        "/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx"
+      register: dhcp_ips
+      until: dhcp_ips.rc == 0 and dhcp_ips.stdout.strip() != ""
+      retries: 30
+      delay: 5
+      loop: "{{ puppet_nodes }}"
+
+    - name: Register each node to in-memory inventory
+      ansible.builtin.add_host:
+        name: "{{ item.stdout.strip() }}"
+        groups: new_puppet_nodes
+        assigned_hostname: "{{ item.item.fqdn }}"
+        assigned_static_ip: "{{ item.item.ip }}/24"
+        ansible_user: "admin"
+        ansible_ssh_common_args: >-
+          -o UserKnownHostsFile=/dev/null
+          -o StrictHostKeyChecking=no
+          -o PubkeyAuthentication=no
+          -o PreferredAuthentications=password
+      loop: "{{ dhcp_ips.results }}"
+      loop_control:
+        label: "{{ item.item.name }} -> {{ item.stdout.strip() }}"
+
+# Part 3: Hostname, baseline packages, then switch to static IPs
+- name: Configure OS Baseline and Networking
+  hosts: new_puppet_nodes
+  become: true
+
+  tasks:
+    - name: Set system hostname
+      ansible.builtin.hostname:
+        name: "{{ assigned_hostname }}"
+
+    - name: Install baseline packages
+      ansible.builtin.dnf:
+        name:
+          - git
+          - chrony
+          - bind-utils
+        state: present
+        update_cache: true
+
+    - name: Set static IP via NetworkManager
+      community.general.nmcli:
+        conn_name: "ens160"
+        ifname: "ens160"
+        type: ethernet
+        ip4: "{{ assigned_static_ip }}"
+        gw4: "{{ static_gateway }}"
+        dns4: "{{ dns_server }}"
+        dns4_search: "lab.local"
+        state: present
+
+    - name: Apply static IP (connection drops — this is expected)
+      ansible.builtin.shell: "sleep 2 && nmcli connection up ens160"
+      async: 10
+      poll: 0

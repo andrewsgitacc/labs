@@ -1,0 +1,171 @@
+---
+# Installs OpenVox Server on puppet.lab.local and wires it to the GitHub
+# control repo using r10k (each Git branch becomes a Puppet environment).
+#
+# The control repo is PUBLIC, so r10k clones it over HTTPS with no credentials.
+# (Normally it would be private and read via a deploy key — see README.md.)
+
+- name: Install and Configure OpenVox Server
+  hosts: puppet_server
+  become: true
+  vars:
+    r10k_bin: /opt/puppetlabs/puppet/bin/r10k
+
+  tasks:
+
+    # --- Packages ---
+
+    - name: Install the OpenVox 8 yum repository
+      ansible.builtin.dnf:
+        name: "{{ openvox_release_rpm }}"
+        state: present
+        disable_gpg_check: true   # the release RPM itself carries the repo GPG key
+
+    - name: Install OpenVox Server, Java and Git
+      ansible.builtin.dnf:
+        name:
+          - java-17-openjdk-headless
+          - openvox-server
+          - git
+        state: present
+        update_cache: true
+
+    # --- puppetserver / puppet.conf ---
+
+    - name: Size the puppetserver JVM heap for a lab VM
+      ansible.builtin.lineinfile:
+        path: /etc/sysconfig/puppetserver
+        regexp: '^JAVA_ARGS='
+        line: >-
+          JAVA_ARGS="-Xms{{ puppetserver_heap }} -Xmx{{ puppetserver_heap }}
+          -Djruby.logger.class=com.puppetlabs.jruby_utils.jruby.Slf4jLogger"
+
+    - name: Configure puppet.conf
+      community.general.ini_file:
+        path: /etc/puppetlabs/puppet/puppet.conf
+        section: "{{ item.section }}"
+        option: "{{ item.option }}"
+        value: "{{ item.value }}"
+        mode: '0644'
+      loop:
+        - { section: main,   option: certname,      value: "{{ puppet_server_fqdn }}" }
+        - { section: main,   option: server,        value: "{{ puppet_server_fqdn }}" }
+        - { section: server, option: dns_alt_names, value: "puppet,{{ puppet_server_fqdn }}" }
+        - { section: server, option: autosign,      value: /etc/puppetlabs/puppet/autosign.conf }
+
+    - name: Autosign any agent in lab.local (lab only — never do this in production)
+      ansible.builtin.copy:
+        dest: /etc/puppetlabs/puppet/autosign.conf
+        content: "*.lab.local\n"
+        owner: puppet
+        group: puppet
+        mode: '0644'
+
+    # --- r10k ---
+
+    - name: Install r10k into the OpenVox bundled Ruby
+      community.general.gem:
+        name: r10k
+        executable: /opt/puppetlabs/puppet/bin/gem
+        user_install: false
+        state: present
+
+    - name: Create r10k config directory
+      ansible.builtin.file:
+        path: /etc/puppetlabs/r10k
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Write r10k.yaml
+      ansible.builtin.copy:
+        dest: /etc/puppetlabs/r10k/r10k.yaml
+        mode: '0644'
+        content: |
+          ---
+          cachedir: /opt/puppetlabs/puppet/cache/r10k
+          sources:
+            control:
+              remote: "{{ control_repo_url }}"
+              basedir: /etc/puppetlabs/code/environments
+          git:
+            provider: shellgit
+
+    - name: Deploy all control-repo branches as environments
+      ansible.builtin.command: "{{ r10k_bin }} deploy environment --modules --verbose info"
+      register: r10k_deploy
+      retries: 3
+      delay: 10
+      until: r10k_deploy.rc == 0
+
+    - name: Install r10k systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/r10k-deploy.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=r10k - deploy Puppet environments from {{ control_repo_name }}
+          Wants=network-online.target
+          After=network-online.target
+
+          [Service]
+          Type=oneshot
+          ExecStart={{ r10k_bin }} deploy environment --modules
+
+    - name: Install r10k systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/r10k-deploy.timer
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Poll GitHub and deploy Puppet environments every {{ r10k_poll_interval }}
+
+          [Timer]
+          OnBootSec=2min
+          OnUnitActiveSec={{ r10k_poll_interval }}
+
+          [Install]
+          WantedBy=timers.target
+
+    - name: Enable r10k timer
+      ansible.builtin.systemd_service:
+        name: r10k-deploy.timer
+        state: started
+        enabled: true
+        daemon_reload: true
+
+    # --- Firewall and service ---
+
+    - name: Open port 8140 for Puppet agents
+      ansible.posix.firewalld:
+        port: 8140/tcp
+        permanent: true
+        state: enabled
+        immediate: true
+
+    - name: Enable and start puppetserver (first start builds the CA — takes a minute or two)
+      ansible.builtin.systemd_service:
+        name: puppetserver
+        state: started
+        enabled: true
+
+    - name: Wait for puppetserver to answer on 8140
+      ansible.builtin.wait_for:
+        port: 8140
+        timeout: 300
+
+    # --- The server manages itself too ---
+
+    - name: Run the Puppet agent on the server (rc 2 = changes applied)
+      ansible.builtin.command: /opt/puppetlabs/bin/puppet agent --test
+      register: server_agent
+      failed_when: server_agent.rc not in [0, 2]
+      changed_when: server_agent.rc == 2
+
+    - name: Print summary
+      ansible.builtin.debug:
+        msg:
+          - "OpenVox Server is running on {{ puppet_server_fqdn }}:8140"
+          - "Control repo: {{ control_repo_url }} (polled every {{ r10k_poll_interval }})"
+          - "Environments: {{ r10k_deploy.stderr_lines | select('search', 'Deploying environment') | list }}"
