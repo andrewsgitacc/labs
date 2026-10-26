@@ -2,6 +2,44 @@
 # Adds Puppet tooling to the existing Jenkins VM (labs/jenkins) so it can
 # lint/validate the puppet-control-repo. The agent SERVICE is left disabled —
 # Jenkins only uses the CLI tools.
+# Powers on the Jenkins VM first if it isn't already running.
+
+- name: Ensure the Jenkins VM is Running
+  hosts: localhost
+  gather_facts: false
+  connection: local
+  become: false
+  vars:
+    vmrun: "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+    jenkins_vmx: "/Users/andrew/Virtual Machines.localized/jenkins.vmwarevm/jenkins.vmx"
+    jenkins_ip: "{{ hostvars[groups['jenkins'][0]]['ansible_host'] }}"
+
+  tasks:
+    - name: List running VMs
+      ansible.builtin.command: '"{{ vmrun }}" list'
+      register: running_vms
+      changed_when: false
+
+    - name: Power on the Jenkins VM if it is not running
+      ansible.builtin.command: '"{{ vmrun }}" start "{{ jenkins_vmx }}" gui'
+      when: jenkins_vmx not in running_vms.stdout
+
+    - name: Wait for SSH on the Jenkins VM
+      ansible.builtin.wait_for:
+        host: "{{ jenkins_ip }}"
+        port: 22
+        timeout: 180
+      register: jenkins_ssh
+      ignore_errors: true
+
+    - name: Explain if Jenkins never came up on the network
+      ansible.builtin.fail:
+        msg: >-
+          Jenkins VM is running but {{ jenkins_ip }}:22 never answered.
+          Check the VM console for a "moved or copied" prompt, and run `ip a`:
+          if enp2s0 has no {{ jenkins_ip }} address, its static-IP connection is
+          still tied to ens160 - recreate it on enp2s0 with nmcli.
+      when: jenkins_ssh is failed
 
 - name: Install Puppet CI Tooling on Jenkins
   hosts: jenkins
