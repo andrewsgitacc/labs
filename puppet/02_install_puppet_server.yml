@@ -15,11 +15,14 @@
 
     # --- Packages ---
 
-    - name: Install the OpenVox 8 yum repository
-      ansible.builtin.dnf:
-        name: "{{ openvox_release_rpm }}"
-        state: present
-        disable_gpg_check: true   # the release RPM itself carries the repo GPG key
+    - name: Add the OpenVox 8 yum repository
+      ansible.builtin.yum_repository:
+        name: openvox8
+        description: "OpenVox 8 - EL 9 - $basearch"
+        baseurl: "{{ openvox_repo_baseurl }}"
+        gpgkey: "{{ openvox_gpgkey }}"
+        gpgcheck: true
+        enabled: true
 
     - name: Install OpenVox Server, Java and Git
       ansible.builtin.dnf:

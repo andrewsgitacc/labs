@@ -11,8 +11,12 @@ puppet_nodes:
 static_gateway: "172.16.79.2"
 dns_server: "172.16.79.10"
 
-# OpenVox (community fork of open-source Puppet) — EL9 release package
-openvox_release_rpm: "https://yum.voxpupuli.org/openvox8-release-el-9.noarch.rpm"
+# OpenVox (community fork of open-source Puppet) — EL9 yum repo
+# yum.voxpupuli.org is unreachable from this network, so use the UChicago mirror.
+# To switch back: https://yum.voxpupuli.org/openvox8/el/9/$basearch and .../GPG-KEY-openvox.pub
+openvox_mirror: "https://mirror.grid.uchicago.edu/pub/openvox/yum"
+openvox_repo_baseurl: "{{ openvox_mirror }}/openvox8/el/9/$basearch"
+openvox_gpgkey: "{{ openvox_mirror }}/GPG-KEY-openvox.pub"
 
 # Puppet server
 puppet_server_fqdn: "puppet.lab.local"

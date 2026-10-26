@@ -8,11 +8,14 @@
   become: true
 
   tasks:
-    - name: Install the OpenVox 8 yum repository
-      ansible.builtin.dnf:
-        name: "{{ openvox_release_rpm }}"
-        state: present
-        disable_gpg_check: true
+    - name: Add the OpenVox 8 yum repository
+      ansible.builtin.yum_repository:
+        name: openvox8
+        description: "OpenVox 8 - EL 9 - $basearch"
+        baseurl: "{{ openvox_repo_baseurl }}"
+        gpgkey: "{{ openvox_gpgkey }}"
+        gpgcheck: true
+        enabled: true
 
     - name: Install OpenVox Agent (for puppet parser validate + bundled Ruby)
       ansible.builtin.dnf:
