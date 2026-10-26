@@ -9,6 +9,14 @@
     vm_name: "jenkins"
 
   tasks:
+    - name: Power off the existing VM if running (so the delete below really removes it)
+      ansible.builtin.command: >
+        "/Applications/VMware Fusion.app/Contents/Public/vmrun" stop
+        "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx" hard
+      register: vm_stop
+      failed_when: false            # not running / doesn't exist yet is fine
+      changed_when: vm_stop.rc == 0
+
     - name: Ensure clean destination directory exists
       ansible.builtin.file:
         path: "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm"

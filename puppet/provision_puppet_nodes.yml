@@ -10,6 +10,15 @@
     vmrun: "/Applications/VMware Fusion.app/Contents/Public/vmrun"
 
   tasks:
+    - name: Power off the existing VMs if running (so the delete below really removes them)
+      ansible.builtin.command: >
+        "/Applications/VMware Fusion.app/Contents/Public/vmrun" stop
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx" hard
+      register: vm_stop
+      failed_when: false            # not running / doesn't exist yet is fine
+      changed_when: vm_stop.rc == 0
+      loop: "{{ puppet_nodes }}"
+
     - name: Ensure clean destination directories exist
       ansible.builtin.file:
         path: "{{ vm_dir }}/{{ item.name }}.vmwarevm"
