@@ -1,0 +1,69 @@
+# {{ ansible_managed }}
+# Jenkins Configuration as Code (JCasC) — applied on every Jenkins start.
+# Changes made in the UI to anything defined here are overwritten on restart.
+
+jenkins:
+  systemMessage: "Lab Jenkins: configured by Ansible + Configuration as Code (labs/jenkins)"
+  numExecutors: 2
+  mode: NORMAL
+  securityRealm:
+    local:
+      allowsSignup: false
+      users:
+        - id: "{{ jenkins_admin_user }}"
+          name: "Lab Admin"
+          password: "{{ jenkins_admin_password }}"
+  authorizationStrategy:
+    loggedInUsersCanDoAnything:
+      allowAnonymousRead: false
+
+unclassified:
+  location:
+    url: "{{ jenkins_url }}"
+
+credentials:
+  system:
+    domainCredentials:
+      - credentials:
+          - basicSSHUserPrivateKey:
+              scope: GLOBAL
+              id: "github-ssh"
+              username: "git"
+              description: "GitHub SSH key (copied from the Mac at deploy time)"
+              privateKeySource:
+                directEntry:
+                  privateKey: "${readFile:/var/lib/jenkins/.ssh/id_github}"
+
+jobs:
+  - script: |
+{% for job in jenkins_jobs %}
+      pipelineJob('{{ job.name }}') {
+        description('{{ job.description }}')
+        properties {
+          pipelineTriggers {
+            triggers {
+              pollSCM {
+                scmpoll_spec('H/5 * * * *')
+              }
+            }
+          }
+        }
+        definition {
+          cpsScm {
+            scm {
+              git {
+                remote {
+                  url('{{ job.url }}')
+{% if job.credentials is defined %}
+                  credentials('{{ job.credentials }}')
+{% endif %}
+                }
+                branch('{{ job.branch }}')
+              }
+            }
+            scriptPath('{{ job.script }}')
+            lightweight(true)
+          }
+        }
+      }
+{% endfor %}

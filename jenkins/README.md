@@ -15,6 +15,7 @@ Deploys a Jenkins CI/CD server on a CentOS Stream 9 VM in VMware Fusion using An
   ansible-galaxy collection install community.general ansible.posix
   ```
 - DNS server deployed — see `labs/dns`
+- GitHub SSH key at `~/.ssh/id_github` on the Mac (used as the Jenkins `github-ssh` credential)
 
 ## DNS
 
@@ -39,53 +40,43 @@ The playbook will:
 3. Set the hostname to `jenkins.lab.local`
 4. Install Java 21, Git, Ansible, ansible-lint, and Jenkins LTS
 5. Open port 8080 in firewalld
-6. Start and enable the Jenkins service
-7. Set the static IP `172.16.79.60` and drop the connection *(expected)*
+6. **Set up Jenkins unattended** (no setup wizard):
+   - Install the plugins in `files/plugins.txt` with the official plugin installation manager
+   - Copy your GitHub SSH key (`~/.ssh/id_github` on the Mac) to the VM and trust GitHub's host keys
+   - Apply **Configuration as Code** (`templates/jenkins.yaml.j2`): admin user, Jenkins URL, the `github-ssh` credential, and all pipeline jobs
+7. Start Jenkins and wait until the admin login works
+8. Set the static IP `172.16.79.60` and drop the connection *(expected)*
 
-## Post-Deploy Setup
+## Logging In
 
-### 1. Trust GitHub's host key
-
-Run once after provisioning so Jenkins can clone from GitHub:
-
-```bash
-ssh -q -t -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)" \
-  "sudo -u jenkins ssh-keyscan github.com | sudo tee -a /var/lib/jenkins/.ssh/known_hosts"
-```
-
-### 2. Unlock Jenkins
-
-```bash
-ssh -q -t -l admin "$(dig @172.16.79.10 jenkins.lab.local +short | tail -1)" \
-  "sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
-```
-
-Open **http://172.16.79.60:8080** in a browser, paste the password, and choose **Install suggested plugins**.
+Open **http://172.16.79.60:8080** and log in as `admin` / `admin` *(lab only)*.
 
 > **Note:** Chrome may fail to reach the Jenkins UI due to VMware NAT subnet routing. Use Safari if Chrome shows `ERR_ADDRESS_UNREACHABLE`.
 
-### 3. Add GitHub SSH key
+There is nothing else to set up. The plugins, credential and jobs are already in place.
 
-Jenkins authenticates to GitHub over SSH:
+## What Gets Configured
 
-1. **Manage Jenkins → Credentials → (global) → Add Credentials**
-2. Kind: `SSH Username with private key`
-3. Username: `git`
-4. Private Key: paste the contents of `~/.ssh/id_github`
+All settings live in `group_vars/all.yml`:
 
-### 4. Create a Pipeline Job
+| Setting | Default | Purpose |
+|---|---|---|
+| `jenkins_admin_user` / `jenkins_admin_password` | `admin` / `admin` | First admin user |
+| `github_ssh_key` | `~/.ssh/id_github` (on the Mac) | Loaded as credential `github-ssh` (username `git`) |
+| `jenkins_jobs` | see below | Pipeline jobs, each polling GitHub every 5 minutes |
+| `plugin_manager_version` | `2.15.0` | Version of the plugin installation manager |
 
-1. **New Item** → name it (e.g., `k8s-cluster`) → **Pipeline** → OK
-2. Under **Pipeline**:
-   - Definition: `Pipeline script from SCM`
-   - SCM: `Git`
-   - Repository URL: `git@github.com:andrewsgitacc/labs.git`
-   - Credentials: select the `git` credential added above
-   - Branch: `*/main`
-   - Script Path: `k8s/Jenkinsfile` *(adjust per lab)*
-3. Save → **Build Now**
+Jobs created by default:
 
-Jenkins polls GitHub every 5 minutes and triggers automatically on new commits.
+| Job | Repo | Branch | Script Path |
+|---|---|---|---|
+| `k8s-cluster` | `git@github.com:andrewsgitacc/labs.git` | `*/main` | `k8s/Jenkinsfile` |
+| `puppet-lab` | `git@github.com:andrewsgitacc/labs.git` | `*/main` | `puppet/Jenkinsfile` |
+| `puppet-control-repo` | `https://github.com/andrewsgitacc/puppet-control-repo.git` | `*/production` | `Jenkinsfile` |
+
+`puppet-control-repo` needs the Puppet tools on this VM. Run `labs/puppet/04_configure_jenkins_for_puppet.yml` once after building Jenkins.
+
+> **Configuration as Code wins.** Jenkins re-applies `/var/lib/jenkins/casc_configs/jenkins.yaml` on every start. Anything it defines (admin user, credential, jobs) reverts to the playbook's version after a restart if you changed it in the UI. Make permanent changes in `group_vars/all.yml` or the template, then re-run the playbook (this rebuilds the VM).
 
 ## Day-2 Operations
 
@@ -108,8 +99,8 @@ ansible -i jenkins_inventory.ini jenkins -m command -a "systemctl status jenkins
 
 ## Adding a New Lab
 
-1. Add a `Jenkinsfile` to the lab repo (copy from `k8s/Jenkinsfile` and adapt)
+1. Add a `Jenkinsfile` to the lab (copy from `k8s/Jenkinsfile` and adapt)
 2. Add a `.ansible-lint` config if the lab uses Ansible playbooks
-3. Create a new Pipeline job in Jenkins pointing at the new repo path
+3. Add an entry to `jenkins_jobs` in `group_vars/all.yml` and re-run `configure_jenkins.yml`. This rebuilds the Jenkins VM from scratch, which is safe because everything is recreated automatically.
 
 Jenkins on this VM handles all lab pipelines centrally.

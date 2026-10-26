@@ -1,0 +1,41 @@
+---
+# Jenkins lab settings — used by configure_jenkins.yml
+
+jenkins_url: "http://172.16.79.60:8080/"
+
+# First admin user, created by Configuration as Code (lab only — plain-text password)
+jenkins_admin_user: "admin"
+jenkins_admin_password: "admin"
+
+# GitHub SSH private key ON THE MAC. Copied to the Jenkins VM at deploy time and
+# loaded as the "github-ssh" credential. Never committed to the repo.
+github_ssh_key: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/id_github"
+
+# https://github.com/jenkinsci/plugin-installation-manager-tool/releases
+plugin_manager_version: "2.15.0"
+plugin_manager_url: >-
+  https://github.com/jenkinsci/plugin-installation-manager-tool/releases/download/{{ plugin_manager_version
+  }}/jenkins-plugin-manager-{{ plugin_manager_version }}.jar
+
+# Pipeline jobs created automatically (Job DSL via Configuration as Code).
+# Each job polls its repo every 5 minutes.
+jenkins_jobs:
+  - name: k8s-cluster
+    description: "Lint + syntax-check the k8s lab playbooks"
+    url: "git@github.com:andrewsgitacc/labs.git"
+    credentials: github-ssh
+    branch: "*/main"
+    script: "k8s/Jenkinsfile"
+
+  - name: puppet-lab
+    description: "Lint + syntax-check the Puppet lab playbooks"
+    url: "git@github.com:andrewsgitacc/labs.git"
+    credentials: github-ssh
+    branch: "*/main"
+    script: "puppet/Jenkinsfile"
+
+  - name: puppet-control-repo
+    description: "Validate + lint the Puppet control repo (needs labs/puppet/04_configure_jenkins_for_puppet.yml)"
+    url: "https://github.com/andrewsgitacc/puppet-control-repo.git"
+    branch: "*/production"
+    script: "Jenkinsfile"

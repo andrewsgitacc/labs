@@ -99,13 +99,151 @@
         state: enabled
         immediate: true
 
+    # --- Unattended setup: no wizard, plugins, Configuration as Code ---
+
+    - name: Check the GitHub SSH key exists on the Mac
+      ansible.builtin.stat:
+        path: "{{ github_ssh_key }}"
+      delegate_to: localhost
+      become: false
+      register: github_key
+
+    - name: Stop early if the GitHub SSH key is missing
+      ansible.builtin.fail:
+        msg: "GitHub SSH key not found at {{ github_ssh_key }} - set github_ssh_key in group_vars/all.yml"
+      when: not github_key.stat.exists
+
+    - name: Create Jenkins directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        owner: jenkins
+        group: jenkins
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: /var/lib/jenkins/.ssh,         mode: '0700' }
+        - { path: /var/lib/jenkins/casc_configs, mode: '0700' }
+        - { path: /var/lib/jenkins/plugins,      mode: '0755' }
+
+    - name: Install the GitHub SSH key for Jenkins
+      ansible.builtin.copy:
+        src: "{{ github_ssh_key }}"
+        dest: /var/lib/jenkins/.ssh/id_github
+        owner: jenkins
+        group: jenkins
+        mode: '0600'
+      no_log: true
+      notify: Restart Jenkins
+
+    - name: Scan GitHub SSH host keys
+      ansible.builtin.command: ssh-keyscan -t ed25519,ecdsa,rsa github.com
+      register: github_host_keys
+      changed_when: false
+
+    - name: Trust GitHub host keys for the jenkins user
+      ansible.builtin.known_hosts:
+        path: /var/lib/jenkins/.ssh/known_hosts
+        name: github.com
+        key: "{{ item }}"
+      loop: "{{ github_host_keys.stdout_lines | select('match', '^github\\.com ') | list }}"
+
+    - name: Make known_hosts owned by jenkins
+      ansible.builtin.file:
+        path: /var/lib/jenkins/.ssh/known_hosts
+        owner: jenkins
+        group: jenkins
+        mode: '0644'
+
+    - name: Download the Jenkins plugin installation manager
+      ansible.builtin.get_url:
+        url: "{{ plugin_manager_url }}"
+        dest: /opt/jenkins-plugin-manager.jar
+        mode: '0644'
+
+    - name: Copy the plugin list
+      ansible.builtin.copy:
+        src: files/plugins.txt
+        dest: /var/lib/jenkins/plugins.txt
+        owner: jenkins
+        group: jenkins
+        mode: '0644'
+      register: plugin_list
+
+    - name: Install Jenkins plugins and their dependencies
+      ansible.builtin.command: >
+        java -jar /opt/jenkins-plugin-manager.jar
+        --war /usr/share/java/jenkins.war
+        --plugin-download-directory /var/lib/jenkins/plugins
+        --plugin-file /var/lib/jenkins/plugins.txt
+      when: plugin_list.changed
+      notify: Restart Jenkins
+
+    - name: Give the jenkins user ownership of the plugins
+      ansible.builtin.file:
+        path: /var/lib/jenkins/plugins
+        owner: jenkins
+        group: jenkins
+        recurse: true
+
+    - name: Write the Configuration as Code file (admin user, credential, jobs)
+      ansible.builtin.template:
+        src: templates/jenkins.yaml.j2
+        dest: /var/lib/jenkins/casc_configs/jenkins.yaml
+        owner: jenkins
+        group: jenkins
+        mode: '0600'
+      notify: Restart Jenkins
+
+    - name: Create the systemd override directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/jenkins.service.d
+        state: directory
+        mode: '0755'
+
+    - name: Skip the setup wizard and load Configuration as Code at startup
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/jenkins.service.d/override.conf
+        mode: '0644'
+        content: |
+          [Service]
+          Environment="JAVA_OPTS=-Djava.awt.headless=true -Djenkins.install.runSetupWizard=false"
+          Environment="CASC_JENKINS_CONFIG=/var/lib/jenkins/casc_configs"
+      notify: Restart Jenkins
+
     # --- Service ---
+
+    - name: Apply pending Jenkins restarts
+      ansible.builtin.meta: flush_handlers
 
     - name: Enable and start Jenkins service
       ansible.builtin.systemd_service:
         name: jenkins
         state: started
         enabled: true
+
+    - name: Wait for Jenkins to come up and accept the admin login
+      ansible.builtin.uri:
+        url: http://localhost:8080/whoAmI/api/json
+        url_username: "{{ jenkins_admin_user }}"
+        url_password: "{{ jenkins_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: jenkins_whoami
+      until: >-
+        jenkins_whoami.status == 200
+        and jenkins_whoami.json.authenticated | default(false)
+        and jenkins_whoami.json.name | default('') == jenkins_admin_user
+      retries: 40
+      delay: 6
+
+    - name: List the jobs Configuration as Code created
+      ansible.builtin.uri:
+        url: "http://localhost:8080/api/json?tree=jobs[name]"
+        url_username: "{{ jenkins_admin_user }}"
+        url_password: "{{ jenkins_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: jenkins_job_list
 
     # --- Networking (last — connection drops when IP changes) ---
 
@@ -124,8 +262,16 @@
       async: 10
       poll: 0
 
-    - name: Print Jenkins unlock instructions
+    - name: Print Jenkins login details
       ansible.builtin.debug:
         msg:
-          - "Jenkins is running at http://{{ static_ip | regex_replace('/.*', '') }}:8080"
-          - "Unlock key: sudo cat /var/lib/jenkins/secrets/initialAdminPassword"
+          - "Jenkins is ready at {{ jenkins_url }} (no setup wizard)"
+          - "Log in as {{ jenkins_admin_user }} / {{ jenkins_admin_password }}"
+          - "Jobs: {{ jenkins_job_list.json.jobs | map(attribute='name') | join(', ') }}"
+
+  handlers:
+    - name: Restart Jenkins
+      ansible.builtin.systemd_service:
+        name: jenkins
+        state: restarted
+        daemon_reload: true

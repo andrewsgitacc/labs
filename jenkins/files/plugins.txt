@@ -1,0 +1,30 @@
+# Jenkins plugins installed by configure_jenkins.yml (latest versions compatible
+# with the installed Jenkins core; dependencies are resolved automatically).
+
+# Pipeline + Git/GitHub
+workflow-aggregator
+pipeline-stage-view
+pipeline-graph-view
+git
+github
+
+# Credentials
+credentials
+credentials-binding
+ssh-credentials
+plain-credentials
+
+# Unattended setup: Configuration as Code + jobs as code
+configuration-as-code
+job-dsl
+
+# Used by the lab Jenkinsfiles / handy in builds
+ws-cleanup
+timestamper
+ansicolor
+build-timeout
+
+# UI
+cloudbees-folder
+antisamy-markup-formatter
+dark-theme
