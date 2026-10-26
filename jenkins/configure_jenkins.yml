@@ -101,17 +101,11 @@
 
     # --- Unattended setup: no wizard, plugins, Configuration as Code ---
 
-    - name: Check the GitHub SSH key exists on the Mac
-      ansible.builtin.stat:
-        path: "{{ github_ssh_key }}"
-      delegate_to: localhost
-      become: false
-      register: github_key
-
-    - name: Stop early if the GitHub SSH key is missing
+    # Jinja tests run on the controller (the Mac), so no delegation/SSH needed
+    - name: Stop early if the GitHub SSH key is missing on the Mac
       ansible.builtin.fail:
         msg: "GitHub SSH key not found at {{ github_ssh_key }} - set github_ssh_key in group_vars/all.yml"
-      when: not github_key.stat.exists
+      when: github_ssh_key is not file
 
     - name: Create Jenkins directories
       ansible.builtin.file:
@@ -221,6 +215,8 @@
         state: started
         enabled: true
 
+    # Don't compare json.name to the user: when user == password (admin/admin)
+    # Ansible masks the password value in the response, hiding the name.
     - name: Wait for Jenkins to come up and accept the admin login
       ansible.builtin.uri:
         url: http://localhost:8080/whoAmI/api/json
@@ -232,7 +228,7 @@
       until: >-
         jenkins_whoami.status == 200
         and jenkins_whoami.json.authenticated | default(false)
-        and jenkins_whoami.json.name | default('') == jenkins_admin_user
+        and not jenkins_whoami.json.anonymous | default(true)
       retries: 40
       delay: 6
 
