@@ -42,6 +42,11 @@
           kind: ClusterConfiguration
           kubernetesVersion: "{{ kubeadm_version.stdout }}"
           controlPlaneEndpoint: "{{ vip_dns }}:6443"
+          # LAB ONLY: long-lived certificates so admin.conf (and the cluster's own
+          # certs) don't expire after the default 1 year. Real clusters keep the
+          # defaults (1 year certs, 10 year CA) and renew certs on upgrade.
+          certificateValidityPeriod: 867240h0m0s    # 99 years (all non-CA certs, incl. admin.conf)
+          caCertificateValidityPeriod: 876000h0m0s  # 100 years (CAs must outlive the certs they sign)
           networking:
             podSubnet: "{{ pod_network_cidr }}"
           apiServer:

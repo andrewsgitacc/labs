@@ -14,6 +14,16 @@ This cluster is the base for the platform lab (see `labs/platform`).
 - containerd, kubeadm, kube-proxy in iptables mode
 - **Calico** CNI (VXLAN, BGP off) — enforces NetworkPolicies
 
+> **Lab only — long-lived certificates.** `03_init_control_plane.yml` sets
+> `certificateValidityPeriod` to 99 years and `caCertificateValidityPeriod` to 100 years,
+> so `admin.conf` (copied to `~/.kube/config` on the Mac) and the cluster's own
+> certificates never expire in practice. This is **not** a production setting: real
+> clusters keep the kubeadm defaults (1-year certificates, 10-year CA), renew with
+> `kubeadm certs renew` or during `kubeadm upgrade`, and give people short-lived
+> credentials through SSO instead of sharing `admin.conf`.
+>
+> Check expiry dates on a control node: `sudo kubeadm certs check-expiration`
+
 ## Note
 
 VMware Fusion uses NAT networking — you can't change vSwitch security policies and there's no vSphere console. Gratuitous ARP for floating VIPs doesn't work reliably, so keepalived/HAProxy is replaced with round-robin DNS pointing `k8s-api.lab.local` at both control plane nodes. The tradeoff: if one control node goes down, ~50% of requests will fail until you update DNS. Acceptable for a lab.
@@ -57,6 +67,19 @@ ansible-playbook -i k8s_inventory.ini 05_install_calico.yml -k -K
 # 6. Configure firewall for CNI
 #    Fixes kube-proxy ClusterIP failures caused by legacy xt_tables on CentOS Stream 9
 ansible-playbook -i k8s_inventory.ini 06_configure_firewall_for_cni.yml -k -K
+```
+
+## Adding nodes later (join tokens)
+
+The join commands saved by `03_init_control_plane.yml` expire: the token after
+**24 hours** and the control-plane certificate key after **2 hours**. Nodes that have
+already joined are not affected — the token is only used once, to join. To join a
+node after that, re-run 03 (it skips `kubeadm init` on an existing cluster and writes
+fresh join commands), then 04:
+
+```bash
+ansible-playbook -i k8s_inventory.ini 03_init_control_plane.yml -k -K
+ansible-playbook -i k8s_inventory.ini 04_join_nodes.yml -k -K
 ```
 
 ## Verification
