@@ -152,8 +152,8 @@
 
     - name: Reconfigure NetworkManager connection profiles to Static IPs
       community.general.nmcli:
-        conn_name: "ens160"
-        ifname: "ens160"
+        conn_name: "{{ ansible_default_ipv4.interface }}"
+        ifname: "{{ ansible_default_ipv4.interface }}"
         type: ethernet
         ip4: "{{ assigned_static_ip }}"
         gw4: "{{ static_gateway }}"
@@ -161,6 +161,6 @@
         state: present
 
     - name: Apply static IP configuration across all cluster nodes concurrently
-      ansible.builtin.shell: "sleep 2 && nmcli connection up ens160"
+      ansible.builtin.shell: "sleep 2 && nmcli connection up {{ ansible_default_ipv4.interface }}"
       async: 10
       poll: 0
