@@ -1,0 +1,67 @@
+---
+# Dynamic zone apps.lab.local for Kubernetes external-dns.
+#
+# external-dns (running in the cluster) creates and removes A records in this
+# zone using RFC2136 dynamic updates, signed with a TSIG key. The main
+# lab.local zone stays static and Ansible-managed, so automatic records can
+# never overwrite hand-made ones.
+#
+# Included by configure_dns_server.yml (fresh builds) and add_apps_zone.yml
+# (existing server). The calling play must define the "Restart BIND service" handler.
+
+- name: Generate TSIG key for external-dns (first run only)
+  ansible.builtin.shell: tsig-keygen -a hmac-sha256 externaldns-key > /etc/named/externaldns.key
+  args:
+    creates: /etc/named/externaldns.key
+  notify: Restart BIND service
+
+- name: Restrict TSIG key file permissions
+  ansible.builtin.file:
+    path: /etc/named/externaldns.key
+    owner: root
+    group: named
+    mode: '0640'
+
+# Dynamic zone files live in /var/named/dynamic: named can write there under
+# SELinux. force: false means the file is only created once; after that BIND
+# owns its contents (records added by external-dns are kept).
+- name: Create apps.lab.local zone file (first run only)
+  ansible.builtin.copy:
+    dest: /var/named/dynamic/apps.lab.local.db
+    owner: named
+    group: named
+    mode: '0644'
+    force: false
+    content: |
+      $TTL 300
+      @   IN  SOA dns.lab.local. admin.lab.local. (
+              2026102901 ; Serial
+              3600       ; Refresh
+              1800       ; Retry
+              604800     ; Expire
+              300 )      ; Minimum TTL
+      @   IN  NS  dns.lab.local.
+  notify: Restart BIND service
+
+- name: Add TSIG key and apps.lab.local zone to named.conf
+  ansible.builtin.blockinfile:
+    path: /etc/named.conf
+    insertbefore: 'include "/etc/named.rfc1912.zones";'
+    marker: "// {mark} ANSIBLE MANAGED EXTERNAL-DNS ZONE"
+    validate: named-checkconf %s
+    block: |
+      include "/etc/named/externaldns.key";
+
+      zone "apps.lab.local" IN {
+          type master;
+          file "dynamic/apps.lab.local.db";
+          allow-update { key "externaldns-key"; };
+          allow-transfer { key "externaldns-key"; };
+      };
+  notify: Restart BIND service
+
+- name: Fetch TSIG key to the Mac for the external-dns setup (git-ignored)
+  ansible.builtin.fetch:
+    src: /etc/named/externaldns.key
+    dest: "{{ playbook_dir }}/externaldns.key"
+    flat: true

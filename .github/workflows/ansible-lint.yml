@@ -1,0 +1,53 @@
+# Lint and syntax-check the Ansible labs on every pull request and push to main.
+# Runs on GitHub-hosted runners: it only reads the code, it never touches the lab.
+name: ansible-lint
+
+on:
+  pull_request:
+    paths:
+      - "k8s/**"
+      - "dns/**"
+      - ".github/workflows/ansible-lint.yml"
+  push:
+    branches: [main]
+    paths:
+      - "k8s/**"
+      - "dns/**"
+      - ".github/workflows/ansible-lint.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Ansible and collections
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy collection install community.general ansible.posix
+
+      - name: Syntax-check playbooks
+        run: |
+          set -e
+          FAILED=0
+          check() {  # $1 = lab dir, $2 = inventory
+            for playbook in "$1"/*.yml; do
+              grep -q "hosts:\|import_playbook:" "$playbook" || { echo "SKIP (no plays): $playbook"; continue; }
+              echo "Checking: $playbook"
+              ansible-playbook --syntax-check -i "$2" "$playbook" || { echo "FAIL: $playbook"; FAILED=1; }
+            done
+          }
+          check k8s k8s/k8s_inventory.ini
+          check dns dns/dns_inventory.ini
+          exit $FAILED
+
+      - name: ansible-lint (k8s)
+        working-directory: k8s
+        run: ansible-lint

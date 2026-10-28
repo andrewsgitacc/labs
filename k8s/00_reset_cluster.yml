@@ -23,6 +23,9 @@
         - /var/lib/cni
         - /var/lib/flannel
         - /run/flannel
+        - /var/lib/calico
+        - /var/run/calico
+        - /var/log/calico
 
     - name: Remove network interfaces
       ansible.builtin.shell: |
@@ -30,6 +33,11 @@
         ip link delete flannel.1 2>/dev/null || true
         ip link delete cilium_host 2>/dev/null || true
         ip link delete cilium_net 2>/dev/null || true
+        ip link delete vxlan.calico 2>/dev/null || true
+        ip link delete tunl0 2>/dev/null || true
+        for dev in $(ip -o link show | awk -F': ' '{print $2}' | cut -d@ -f1 | grep '^cali'); do
+          ip link delete "$dev" 2>/dev/null || true
+        done
       changed_when: true
 
     - name: Flush iptables

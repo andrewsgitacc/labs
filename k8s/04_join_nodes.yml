@@ -7,12 +7,12 @@
     firewall_ports:
       - 6443/tcp
       - 10250/tcp
-      - 10251/tcp
-      - 10252/tcp
+      - 10259/tcp  # kube-scheduler
+      - 10257/tcp  # kube-controller-manager
       - 2379/tcp
       - 2380/tcp
-      - 179/tcp
-      - 8472/udp   # Flannel VXLAN
+      - 4789/udp   # Calico VXLAN
+      - 5473/tcp   # Calico Typha
       - 30000-32767/tcp  # NodePort services
 
   tasks:
@@ -80,12 +80,12 @@
     firewall_ports:
       - 6443/tcp
       - 10250/tcp
-      - 10251/tcp
-      - 10252/tcp
+      - 10259/tcp  # kube-scheduler
+      - 10257/tcp  # kube-controller-manager
       - 2379/tcp
       - 2380/tcp
-      - 179/tcp
-      - 8472/udp   # Flannel VXLAN
+      - 4789/udp   # Calico VXLAN
+      - 5473/tcp   # Calico Typha
       - 30000-32767/tcp  # NodePort services
 
   tasks:
@@ -152,8 +152,8 @@
     join_command_file: "{{ playbook_dir }}/worker_join_command.txt"
     firewall_ports:
       - 10250/tcp
-      - 179/tcp
-      - 8472/udp   # Flannel VXLAN
+      - 4789/udp   # Calico VXLAN
+      - 5473/tcp   # Calico Typha
       - 30000-32767/tcp  # NodePort services
 
   tasks:

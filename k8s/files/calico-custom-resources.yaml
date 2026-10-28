@@ -1,0 +1,30 @@
+# Calico configuration for the lab cluster, applied by 05_install_calico.yml.
+#
+# - VXLAN overlay, BGP off: works on VMware Fusion NAT (no routing changes on
+#   the virtual network) and is the same tunnel type Flannel used.
+# - Pool matches the kubeadm podSubnet (10.244.0.0/16).
+# - Node IPs come from Kubernetes (NodeInternalIP), so Calico never picks the
+#   wrong interface.
+apiVersion: operator.tigera.io/v1
+kind: Installation
+metadata:
+  name: default
+spec:
+  calicoNetwork:
+    bgp: Disabled
+    ipPools:
+      - name: default-ipv4-ippool
+        cidr: 10.244.0.0/16
+        blockSize: 26
+        encapsulation: VXLAN
+        natOutgoing: Enabled
+        nodeSelector: all()
+    nodeAddressAutodetectionV4:
+      kubernetes: NodeInternalIP
+---
+# Calico API server: lets kubectl manage Calico resources (e.g. GlobalNetworkPolicy).
+apiVersion: operator.tigera.io/v1
+kind: APIServer
+metadata:
+  name: default
+spec: {}

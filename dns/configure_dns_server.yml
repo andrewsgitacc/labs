@@ -107,6 +107,9 @@
           };
       notify: Restart BIND service
 
+    - name: Configure dynamic apps.lab.local zone for external-dns
+      ansible.builtin.include_tasks: tasks/apps_zone.yml
+
     - name: Create forward zone file
       ansible.builtin.copy:
         dest: "/var/named/{{ domain_name }}.db"

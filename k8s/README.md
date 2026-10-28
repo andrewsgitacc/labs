@@ -3,6 +3,16 @@
 **Author:** Andrew Kyle — [LinkedIn](https://www.linkedin.com/in/andrew-kyle-1007591/)
 
 Deploys a 3-control-plane, 3-worker Kubernetes cluster on VMware Fusion using Ansible.
+This cluster is the base for the platform lab (see `labs/platform`).
+
+| Node | IP | vCPU / RAM | Extra disk |
+|---|---|---|---|
+| k8s-control-01..03 | 172.16.79.21–23 | 2 / 4 GB | — |
+| k8s-worker-01..03 | 172.16.79.31–33 | 4 / 10 GB | 100 GB thin `/dev/nvme0n2` (Ceph OSD, left empty) |
+
+- Kubernetes **v1.36** (set by `k8s_minor_version` in `02_install_k8s_software.yml`)
+- containerd, kubeadm, kube-proxy in iptables mode
+- **Calico** CNI (VXLAN, BGP off) — enforces NetworkPolicies
 
 ## Note
 
@@ -16,6 +26,7 @@ VMware Fusion uses NAT networking — you can't change vSwitch security policies
   - Password: `admin` *(lab only)*
 - Ansible (on Mac)
 - DNS server deployed — see `labs/dns`
+- About 44 GB of free RAM on the Mac (stop the Puppet/Jenkins lab VMs first) and ~300 GB free disk for the thin Ceph disks as they fill
 
 ## Deployment
 
@@ -40,8 +51,8 @@ ansible-playbook -i k8s_inventory.ini 03_init_control_plane.yml -k -K
 # 4. Join worker and second control plane nodes
 ansible-playbook -i k8s_inventory.ini 04_join_nodes.yml -k -K
 
-# 5. Install Flannel CNI (VXLAN backend — Cilium has limitations on VMware Fusion)
-ansible-playbook -i k8s_inventory.ini 05_install_flannel.yml -k -K
+# 5. Install Calico CNI (VXLAN, BGP off — Cilium has limitations on VMware Fusion)
+ansible-playbook -i k8s_inventory.ini 05_install_calico.yml -k -K
 
 # 6. Configure firewall for CNI
 #    Fixes kube-proxy ClusterIP failures caused by legacy xt_tables on CentOS Stream 9
@@ -138,7 +149,7 @@ kubectl rollout history deployment/nginx
 kubectl delete deployment nginx
 ```
 
-### Cross-pod networking (Flannel)
+### Cross-pod networking (Calico)
 
 ```bash
 kubectl create deployment server --image=nginx
@@ -160,14 +171,63 @@ curl http://172.16.79.33:$NODEPORT
 kubectl delete deployment nginx && kubectl delete service nginx
 ```
 
-### Flannel pod status and routes
+### Calico status and routes
 
 ```bash
-kubectl get pods -n kube-flannel -o wide
-kubectl logs -n kube-flannel -l app=flannel | tail -20
+kubectl get tigerastatus                 # all AVAILABLE=True
+kubectl get pods -n calico-system -o wide
 
-# Run from Mac — each node should have routes to other nodes' pod CIDRs
-ssh -q -t admin@172.16.79.31 "ip route | grep 10.244"
+# Run from Mac — each node has a vxlan.calico interface and routes to other nodes' pod blocks
+ssh -q -t admin@172.16.79.31 "ip -d link show vxlan.calico; ip route | grep 10.244"
+```
+
+### NetworkPolicy (needs Calico — Flannel ignored these)
+
+```bash
+kubectl create namespace np-test
+kubectl -n np-test create deployment web --image=nginx
+kubectl -n np-test expose deployment web --port=80
+kubectl -n np-test wait --for=condition=available deployment/web --timeout=60s
+
+# 1. Works before any policy
+kubectl -n np-test run client --image=curlimages/curl --rm -it --restart=Never -- curl -s -m 5 web | head -4
+
+# 2. Deny all ingress in the namespace — the same curl now times out
+kubectl apply -n np-test -f - <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+EOF
+kubectl -n np-test run client --image=curlimages/curl --rm -it --restart=Never -- curl -s -m 5 web || echo "blocked (expected)"
+
+# 3. Allow only pods labelled role=client — works again for them
+kubectl apply -n np-test -f - <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-client
+spec:
+  podSelector:
+    matchLabels: {app: web}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {role: client}
+EOF
+kubectl -n np-test run client --labels=role=client --image=curlimages/curl --rm -it --restart=Never -- curl -s -m 5 web | head -4
+
+kubectl delete namespace np-test
+```
+
+### Ceph disks on the workers
+
+```bash
+# Run from Mac — each worker should show an empty 100G nvme0n2 (no partitions, no filesystem)
+for ip in 172.16.79.31 172.16.79.32 172.16.79.33; do ssh -q admin@$ip "hostname; lsblk -f /dev/nvme0n2"; done
 ```
 
 ### Resource limits

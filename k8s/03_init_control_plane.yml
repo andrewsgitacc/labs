@@ -9,12 +9,12 @@
     firewall_ports:
       - 6443/tcp   # Kubernetes API server
       - 10250/tcp  # kubelet API
-      - 10251/tcp  # kube-scheduler
-      - 10252/tcp  # kube-controller-manager
+      - 10259/tcp  # kube-scheduler
+      - 10257/tcp  # kube-controller-manager
       - 2379/tcp   # etcd client
       - 2380/tcp   # etcd peer
-      - 179/tcp    # Flannel BGP
-      - 8472/udp   # Flannel VXLAN
+      - 4789/udp   # Calico VXLAN
+      - 5473/tcp   # Calico Typha
       - 30000-32767/tcp  # NodePort services
 
   tasks:
@@ -26,6 +26,11 @@
         immediate: true
       loop: "{{ firewall_ports }}"
 
+    - name: Get installed kubeadm version (cluster is built at this exact version)
+      ansible.builtin.command: kubeadm version -o short
+      register: kubeadm_version
+      changed_when: false
+
     - name: Write kubeadm configuration file
       ansible.builtin.copy:
         dest: "{{ kubeadm_config_path }}"
@@ -35,7 +40,7 @@
         content: |
           apiVersion: kubeadm.k8s.io/v1beta4
           kind: ClusterConfiguration
-          kubernetesVersion: stable
+          kubernetesVersion: "{{ kubeadm_version.stdout }}"
           controlPlaneEndpoint: "{{ vip_dns }}:6443"
           networking:
             podSubnet: "{{ pod_network_cidr }}"

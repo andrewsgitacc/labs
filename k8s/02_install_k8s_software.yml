@@ -2,6 +2,10 @@
 - name: Install Containerd and Kubernetes Software Components
   hosts: new_cluster_nodes
   become: true
+  vars:
+    # Kubernetes minor version to install (one behind the latest release is common
+    # in real environments). Upgrades are done later with kubeadm, one minor at a time.
+    k8s_minor_version: "v1.36"
   tasks:
     - name: Purge any old or broken tracking repository configurations completely
       ansible.builtin.file:
@@ -44,10 +48,10 @@
         content: |
           [kubernetes]
           name=Kubernetes stable
-          baseurl=https://pkgs.k8s.io/core:/stable:/v1.32/rpm/
+          baseurl=https://pkgs.k8s.io/core:/stable:/{{ k8s_minor_version }}/rpm/
           enabled=1
           gpgcheck=1
-          gpgkey=https://pkgs.k8s.io/core:/stable:/v1.32/rpm/repodata/repomd.xml.key
+          gpgkey=https://pkgs.k8s.io/core:/stable:/{{ k8s_minor_version }}/rpm/repodata/repomd.xml.key
           exclude=kubelet kubeadm kubectl
 
     - name: Install Kubernetes and Container Runtime packages concurrently

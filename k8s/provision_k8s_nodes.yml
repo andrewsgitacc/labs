@@ -6,14 +6,28 @@
   become: false
   vars:
     template_path: "/Users/andrew/Virtual Machines.localized/CentOS9aarch64.vmwarevm/CentOS9aarch64.vmx"
+    vm_dir: "/Users/andrew/Virtual Machines.localized"
+    vdiskmanager: "/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager"
 
+    # Workers carry the platform (Ceph, Prometheus, Harbor...) so they get most of the RAM.
+    # ceph_disk: true adds a second, empty, thin-provisioned disk used as a Ceph OSD.
     k8s_nodes:
       - { name: "k8s-control-01", cpus: "2", ram: "4096" }
       - { name: "k8s-control-02", cpus: "2", ram: "4096" }
       - { name: "k8s-control-03", cpus: "2", ram: "4096" }
-      - { name: "k8s-worker-01",  cpus: "2", ram: "2048" }
-      - { name: "k8s-worker-02",  cpus: "2", ram: "2048" }
-      - { name: "k8s-worker-03",  cpus: "2", ram: "2048" }
+      - { name: "k8s-worker-01",  cpus: "4", ram: "10240", ceph_disk: true }
+      - { name: "k8s-worker-02",  cpus: "4", ram: "10240", ceph_disk: true }
+      - { name: "k8s-worker-03",  cpus: "4", ram: "10240", ceph_disk: true }
+
+    # Ceph OSD disk: thin provisioned, so it only uses Mac disk space as Ceph fills it.
+    # Attached as the second namespace on the template's NVMe controller (nvme0:1),
+    # which shows up in the guest as /dev/nvme0n2.
+    ceph_disk_size: "100GB"
+    ceph_disk_file: "ceph-osd.vmdk"
+    ceph_nodes: "{{ k8s_nodes | selectattr('ceph_disk', 'defined') | list }}"
+    ceph_vmx_settings:
+      - { key: "nvme0:1.present",  value: "TRUE" }
+      - { key: "nvme0:1.fileName", value: "{{ ceph_disk_file }}" }
 
   tasks:
     - name: Power off the existing VMs if running (so the delete below really removes them)
@@ -47,10 +61,27 @@
       ansible.builtin.command: "sed -i '' 's/^memsize =.*/memsize = \"{{ item.ram }}\"/g' \"/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx\""
       loop: "{{ k8s_nodes }}"
 
+    - name: Create the Ceph OSD disk on each worker (thin provisioned)
+      ansible.builtin.command: >
+        "{{ vdiskmanager }}" -c -s {{ ceph_disk_size }} -a lsilogic -t 0
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ ceph_disk_file }}"
+      args:
+        creates: "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ ceph_disk_file }}"
+      loop: "{{ ceph_nodes }}"
+
+    - name: Attach the Ceph OSD disk to each worker's NVMe controller
+      ansible.builtin.lineinfile:
+        path: "{{ vm_dir }}/{{ item.0.name }}.vmwarevm/{{ item.0.name }}.vmx"
+        regexp: '^{{ item.1.key | regex_escape }}\s*='
+        line: '{{ item.1.key }} = "{{ item.1.value }}"'
+      loop: "{{ ceph_nodes | product(ceph_vmx_settings) | list }}"
+      loop_control:
+        label: "{{ item.0.name }}: {{ item.1.key }}"
+
     - name: Power on all Kubernetes nodes inside VMware Fusion
       ansible.builtin.command: '"/Applications/VMware Fusion.app/Contents/Public/vmrun" start "/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx" gui'
       loop: "{{ k8s_nodes }}"
 
     - name: Notify next orchestration sequence
       ansible.builtin.debug:
-        msg: "All 6 Kubernetes nodes are booting with customized vCPU and RAM allocations. Proceeding to network loops."
+        msg: "All 6 Kubernetes nodes are booting (workers with a {{ ceph_disk_size }} Ceph disk). Proceeding to network loops."
