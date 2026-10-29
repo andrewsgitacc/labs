@@ -11,7 +11,7 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 - **DNS:** `labs/dns` — BIND; `apps.lab.local` is updated automatically by external-dns
 - **CI:** GitHub Actions — PR checks on GitHub-hosted runners, image builds on self-hosted runners in the cluster
 - **CD:** Argo CD deploys from Git; Kargo promotes dev → staging → prod
-- **Workstation:** the Mac (`platform/workstation`)
+- **Utility server:** `dns.lab.local` doubles as the admin box — kubectl, helm, k9s and the cluster kubeconfig live there (`labs/admin`). Nothing is installed on the Mac; it only runs Ansible and the browser
 
 ## Repos
 
@@ -28,7 +28,7 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 |---|---|
 | .1 | Mac (vmnet8) |
 | .2 | NAT gateway |
-| .10 | dns.lab.local |
+| .10 | dns.lab.local — DNS + utility server (admin tools) |
 | .21–.23 | k8s control planes |
 | .31–.33 | k8s workers |
 | .50 | client |
@@ -41,7 +41,7 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 
 | # | Phase | Status |
 |---|---|---|
-| 1 | Prep: workstation tools, Mac DNS, `apps.lab.local` zone, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | in progress |
+| 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | in progress |
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | |
 | 3 | Argo CD (self-managed; GitOps from here) | |
 | 4 | Sealed Secrets | |
@@ -55,16 +55,16 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 
 ## Phase 1 runbook
 
-Run everything from the Mac, in the `labs` repo.
+Ansible runs from the Mac, in the `labs` repo. Cluster commands run on the utility server.
 
-### 1. Workstation
+### 1. Mac DNS resolver
 
 ```bash
 ./platform/workstation/setup_workstation.sh
 ```
 
-Installs kubectl, helm, k9s, kubectx, stern, jq, yq and gh, and creates
-`/etc/resolver/lab.local` so the Mac uses the lab DNS for `*.lab.local`.
+Creates `/etc/resolver/lab.local` so the Mac (browser, ssh, Ansible) uses the lab DNS for
+`*.lab.local`. Nothing is installed on the Mac.
 
 Check: `dscacheutil -q host -a name k8s-api.lab.local` returns the control plane IPs.
 
@@ -76,38 +76,53 @@ ansible-playbook -i dns_inventory.ini add_apps_zone.yml -k -K
 cd ..
 ```
 
-Then run the verification in `dns/README.md` (signed update works, unsigned is refused).
+Then run the verification in `dns/README.md` on the DNS server (`ssh admin@dns.lab.local`):
+a signed update works, an unsigned one is refused.
 
-### 3. Rebuild the cluster
+### 3. Admin tools on the utility server
+
+```bash
+cd admin
+ansible-playbook -i admin_inventory.ini install_admin_tools.yml -k -K
+cd ..
+```
+
+### 4. Rebuild the cluster
 
 This destroys and recreates all six k8s VMs (the cluster had no workloads).
 Power off the Puppet and Jenkins VMs first to free RAM. Then run the playbooks
-in `k8s/README.md` in order (01 → 06).
+in `k8s/README.md` in order (01 → 06). Playbook 03 installs the kubeconfig on the
+utility server.
 
-Check:
+Check, on the utility server:
 
 ```bash
-kubectl get nodes -o wide      # 6 nodes Ready, v1.36.x, from the Mac (03 copies the kubeconfig)
+ssh admin@dns.lab.local
+kubectl get nodes -o wide      # 6 nodes Ready, v1.36.x
 kubectl get tigerastatus       # calico, apiserver AVAILABLE=True
 k9s                            # browse the cluster
 ```
 
 Then run the `k8s/README.md` tests, especially **NetworkPolicy** and **Ceph disks on the workers**.
 
-### 4. New repos
+### 5. New repos
+
+On the utility server (`gh` is installed there):
 
 ```bash
 gh auth login        # once
 gh repo create andrewsgitacc/platform-gitops   --public  --add-readme --description "GitOps config for the platform lab (Argo CD)"
 gh repo create andrewsgitacc/sample-app        --private --add-readme --description "Demo app for the platform lab CI/CD"
 gh repo create andrewsgitacc/sample-app-deploy --public  --add-readme --description "Environment config for sample-app, promoted by Kargo"
-cd ~/GitHub && for r in platform-gitops sample-app sample-app-deploy; do git clone git@github.com:andrewsgitacc/$r.git; done
 ```
+
+Or create them in the GitHub web UI, then clone them into `~/GitHub` on the Mac.
 
 ### Phase 1 done when
 
 - [ ] `k8s-api.lab.local` resolves on the Mac without `@172.16.79.10`
 - [ ] Signed nsupdate to `apps.lab.local` works, unsigned is refused
+- [ ] kubectl, helm, k9s work on the utility server
 - [ ] 6 nodes Ready on v1.36, Calico Available
 - [ ] NetworkPolicy test blocks and allows as expected
 - [ ] `/dev/nvme0n2` (100G, empty) on all 3 workers

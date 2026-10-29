@@ -118,27 +118,11 @@
         mode: '0600'
         force: true
 
-    - name: Fetch admin.conf to Ansible controller (for local kubectl access)
+    - name: Fetch admin.conf to the Mac (git-ignored; handed to the admin host at the end)
       ansible.builtin.fetch:
         src: /etc/kubernetes/admin.conf
         dest: "{{ playbook_dir }}/admin.conf"
         flat: true
-
-    - name: Ensure .kube directory exists on Ansible controller
-      ansible.builtin.file:
-        path: "{{ lookup('env', 'HOME') }}/.kube"
-        state: directory
-        mode: '0700'
-      delegate_to: localhost
-      become: false
-
-    - name: Copy admin.conf to ~/.kube/config on Ansible controller
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/admin.conf"
-        dest: "{{ lookup('env', 'HOME') }}/.kube/config"
-        mode: '0600'
-      delegate_to: localhost
-      become: false
 
     - name: Set kube-proxy mode to iptables (fixes nftables/legacy conflict on CentOS Stream 9)
       ansible.builtin.shell: |
@@ -186,3 +170,26 @@
         dest: "{{ playbook_dir }}/worker_join_command.txt"
       delegate_to: localhost
       become: false
+
+# Cluster admin access lives on the utility server (dns.lab.local), not the Mac.
+# See labs/admin. install_admin_tools.yml installs kubectl/helm/k9s there.
+- name: Install cluster kubeconfig on the admin host
+  hosts: admin_hosts
+  become: true
+
+  tasks:
+    - name: Create .kube directory for admin
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Copy admin.conf to admin's kubeconfig
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/admin.conf"
+        dest: /home/admin/.kube/config
+        owner: admin
+        group: admin
+        mode: '0600'

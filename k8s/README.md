@@ -82,9 +82,22 @@ ansible-playbook -i k8s_inventory.ini 03_init_control_plane.yml -k -K
 ansible-playbook -i k8s_inventory.ini 04_join_nodes.yml -k -K
 ```
 
+## Cluster admin access
+
+`03_init_control_plane.yml` installs the admin kubeconfig on the utility server
+(`dns.lab.local`), where `labs/admin` installs kubectl, helm and k9s:
+
+```bash
+ssh admin@dns.lab.local
+kubectl get nodes
+```
+
+A git-ignored copy is also kept on the Mac at `k8s/admin.conf` so the playbooks can
+hand it over. Nothing is copied to the Mac's `~/.kube/config`.
+
 ## Verification
 
-SSH to a control node:
+SSH to a control node (or the utility server):
 
 ```bash
 ssh -q -l admin "$(dig @172.16.79.10 k8s-api.lab.local +short | tail -1)"

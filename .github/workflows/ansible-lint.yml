@@ -7,12 +7,14 @@ on:
     paths:
       - "k8s/**"
       - "dns/**"
+      - "admin/**"
       - ".github/workflows/ansible-lint.yml"
   push:
     branches: [main]
     paths:
       - "k8s/**"
       - "dns/**"
+      - "admin/**"
       - ".github/workflows/ansible-lint.yml"
 
 permissions:
@@ -46,6 +48,7 @@ jobs:
           }
           check k8s k8s/k8s_inventory.ini
           check dns dns/dns_inventory.ini
+          check admin admin/admin_inventory.ini
           exit $FAILED
 
       - name: ansible-lint (k8s)
