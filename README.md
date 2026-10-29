@@ -25,7 +25,7 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 | # | Phase | What it adds | Status |
 |---|---|---|---|
 | 1 | Prep | Cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), dynamic DNS zone, admin tools, new repos | ✅ Done |
-| 2 | Cluster foundation | MetalLB, gateway (hostname routing), cert-manager with an internal CA, external-dns | ⏭️ Next |
+| 2 | Cluster foundation | MetalLB, Envoy Gateway (Gateway API), cert-manager with an internal CA, external-dns | 🚧 In progress |
 | 3 | Argo CD | GitOps: everything after this is deployed from Git | Planned |
 | 4 | Sealed Secrets | Encrypted secrets stored safely in Git | Planned |
 | 5 | Rook-Ceph | Block, file and S3-compatible object storage | Planned |
