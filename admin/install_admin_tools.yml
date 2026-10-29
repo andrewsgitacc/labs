@@ -1,0 +1,178 @@
+---
+# Install the platform admin CLI tools on the utility server (dns.lab.local).
+#
+#   kubectl, helm, k9s, stern, yq, jq, git, gh, dig/nsupdate
+#
+# Usage (from the Mac, in admin/):
+#   ansible-playbook -i admin_inventory.ini install_admin_tools.yml -k -K
+#
+# Then: ssh admin@dns.lab.local  ->  kubectl get nodes / k9s
+
+- name: Install platform admin tools
+  hosts: admin_hosts
+  become: true
+  vars_files:
+    - vars/tool_versions.yml
+  vars:
+    arch: arm64
+    install_dir: /usr/local/bin
+    download_dir: /root/admin-tools
+    kubeconfig_src: "{{ playbook_dir }}/../k8s/admin.conf"
+
+  tasks:
+    # ---- Packages from repos -------------------------------------------------
+    - name: Add Kubernetes repo (kubectl only, same minor as the cluster)
+      ansible.builtin.yum_repository:
+        name: kubernetes
+        description: Kubernetes {{ k8s_minor_version }}
+        baseurl: "https://pkgs.k8s.io/core:/stable:/{{ k8s_minor_version }}/rpm/"
+        gpgkey: "https://pkgs.k8s.io/core:/stable:/{{ k8s_minor_version }}/rpm/repodata/repomd.xml.key"
+        gpgcheck: true
+        exclude: kubectl
+
+    - name: Add GitHub CLI repo
+      ansible.builtin.yum_repository:
+        name: gh-cli
+        description: GitHub CLI
+        baseurl: https://cli.github.com/packages/rpm
+        gpgkey: https://cli.github.com/packages/githubcli-archive-keyring.gpg
+        gpgcheck: true
+
+    - name: Install packages
+      ansible.builtin.dnf:
+        name:
+          - kubectl
+          - gh
+          - git
+          - jq
+          - bind-utils        # dig, nsupdate
+          - bash-completion
+          - tar
+        state: present
+        disable_excludes: kubernetes
+        update_cache: true
+
+    # ---- Pinned release binaries ----------------------------------------------
+    - name: Create download directory
+      ansible.builtin.file:
+        path: "{{ download_dir }}"
+        state: directory
+        mode: '0700'
+
+    - name: Download release archives (checksum-verified)
+      ansible.builtin.get_url:
+        url: "{{ item.url }}"
+        dest: "{{ download_dir }}/{{ item.url | basename }}"
+        checksum: "{{ item.checksum }}"
+        mode: '0644'
+      loop:
+        - name: helm
+          url: "https://get.helm.sh/helm-{{ helm_version }}-linux-{{ arch }}.tar.gz"
+          checksum: "sha256:https://get.helm.sh/helm-{{ helm_version }}-linux-{{ arch }}.tar.gz.sha256sum"
+        - name: k9s
+          url: "https://github.com/derailed/k9s/releases/download/{{ k9s_version }}/k9s_Linux_{{ arch }}.tar.gz"
+          checksum: "sha256:https://github.com/derailed/k9s/releases/download/{{ k9s_version }}/checksums.sha256"
+        - name: stern
+          url: "https://github.com/stern/stern/releases/download/v{{ stern_version }}/stern_{{ stern_version }}_linux_{{ arch }}.tar.gz"
+          checksum: "sha256:https://github.com/stern/stern/releases/download/v{{ stern_version }}/checksums.txt"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Extract release archives
+      ansible.builtin.unarchive:
+        src: "{{ download_dir }}/{{ item }}"
+        dest: "{{ download_dir }}"
+        remote_src: true
+      loop:
+        - "helm-{{ helm_version }}-linux-{{ arch }}.tar.gz"
+        - "k9s_Linux_{{ arch }}.tar.gz"
+        - "stern_{{ stern_version }}_linux_{{ arch }}.tar.gz"
+
+    - name: Install helm, k9s and stern binaries
+      ansible.builtin.copy:
+        src: "{{ download_dir }}/{{ item }}"
+        dest: "{{ install_dir }}/{{ item | basename }}"
+        remote_src: true
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - "linux-{{ arch }}/helm"
+        - k9s
+        - stern
+
+    # yq publishes checksums in a multi-hash format get_url can't read, so this
+    # one is pinned by version only.
+    - name: Install yq
+      ansible.builtin.get_url:
+        url: "https://github.com/mikefarah/yq/releases/download/{{ yq_version }}/yq_linux_{{ arch }}"
+        dest: "{{ install_dir }}/yq"
+        mode: '0755'
+        force: true
+
+    # ---- Shell convenience ------------------------------------------------------
+    - name: Add bash completion for kubectl, helm and stern
+      ansible.builtin.shell: |
+        set -o pipefail
+        {{ install_dir }}/helm completion bash > /etc/bash_completion.d/helm
+        /usr/bin/kubectl completion bash > /etc/bash_completion.d/kubectl
+        {{ install_dir }}/stern --completion bash > /etc/bash_completion.d/stern
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Add k alias for kubectl (with completion)
+      ansible.builtin.copy:
+        dest: /etc/profile.d/k8s-tools.sh
+        mode: '0644'
+        content: |
+          # Platform lab admin tools
+          alias k=kubectl
+          complete -o default -F __start_kubectl k 2>/dev/null || true
+
+    # ---- Cluster access ---------------------------------------------------------
+    # 03_init_control_plane.yml also copies this after every cluster build;
+    # doing it here too means the order you run the playbooks doesn't matter.
+    - name: Check for the cluster kubeconfig on the Mac (k8s/admin.conf)
+      ansible.builtin.stat:
+        path: "{{ kubeconfig_src }}"
+      register: kubeconfig_file
+      delegate_to: localhost
+      become: false
+
+    - name: Create .kube directory for admin
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Install kubeconfig for admin
+      ansible.builtin.copy:
+        src: "{{ kubeconfig_src }}"
+        dest: /home/admin/.kube/config
+        owner: admin
+        group: admin
+        mode: '0600'
+      when: kubeconfig_file.stat.exists
+
+    # ---- Check ------------------------------------------------------------------
+    - name: Show installed versions
+      ansible.builtin.shell: |
+        echo "kubectl: $(kubectl version --client 2>/dev/null | head -1)"
+        echo "helm:    $(helm version --short)"
+        echo "k9s:     $(k9s version --short 2>/dev/null | grep -i version)"
+        echo "stern:   $(stern --version | head -1)"
+        echo "yq:      $(yq --version)"
+        echo "jq:      $(jq --version)"
+        echo "gh:      $(gh --version | head -1)"
+        echo "git:     $(git --version)"
+      changed_when: false
+      register: tool_versions
+      environment:
+        PATH: "{{ install_dir }}:/usr/bin:/bin"
+
+    - name: Print versions
+      ansible.builtin.debug:
+        var: tool_versions.stdout_lines

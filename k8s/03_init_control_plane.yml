@@ -9,12 +9,12 @@
     firewall_ports:
       - 6443/tcp   # Kubernetes API server
       - 10250/tcp  # kubelet API
-      - 10251/tcp  # kube-scheduler
-      - 10252/tcp  # kube-controller-manager
+      - 10259/tcp  # kube-scheduler
+      - 10257/tcp  # kube-controller-manager
       - 2379/tcp   # etcd client
       - 2380/tcp   # etcd peer
-      - 179/tcp    # Flannel BGP
-      - 8472/udp   # Flannel VXLAN
+      - 4789/udp   # Calico VXLAN
+      - 5473/tcp   # Calico Typha
       - 30000-32767/tcp  # NodePort services
 
   tasks:
@@ -26,6 +26,11 @@
         immediate: true
       loop: "{{ firewall_ports }}"
 
+    - name: Get installed kubeadm version (cluster is built at this exact version)
+      ansible.builtin.command: kubeadm version -o short
+      register: kubeadm_version
+      changed_when: false
+
     - name: Write kubeadm configuration file
       ansible.builtin.copy:
         dest: "{{ kubeadm_config_path }}"
@@ -35,8 +40,13 @@
         content: |
           apiVersion: kubeadm.k8s.io/v1beta4
           kind: ClusterConfiguration
-          kubernetesVersion: stable
+          kubernetesVersion: "{{ kubeadm_version.stdout }}"
           controlPlaneEndpoint: "{{ vip_dns }}:6443"
+          # LAB ONLY: long-lived certificates so admin.conf (and the cluster's own
+          # certs) don't expire after the default 1 year. Real clusters keep the
+          # defaults (1 year certs, 10 year CA) and renew certs on upgrade.
+          certificateValidityPeriod: 867240h0m0s    # 99 years (all non-CA certs, incl. admin.conf)
+          caCertificateValidityPeriod: 876000h0m0s  # 100 years (CAs must outlive the certs they sign)
           networking:
             podSubnet: "{{ pod_network_cidr }}"
           apiServer:
@@ -108,27 +118,11 @@
         mode: '0600'
         force: true
 
-    - name: Fetch admin.conf to Ansible controller (for local kubectl access)
+    - name: Fetch admin.conf to the Mac (git-ignored; handed to the admin host at the end)
       ansible.builtin.fetch:
         src: /etc/kubernetes/admin.conf
         dest: "{{ playbook_dir }}/admin.conf"
         flat: true
-
-    - name: Ensure .kube directory exists on Ansible controller
-      ansible.builtin.file:
-        path: "{{ lookup('env', 'HOME') }}/.kube"
-        state: directory
-        mode: '0700'
-      delegate_to: localhost
-      become: false
-
-    - name: Copy admin.conf to ~/.kube/config on Ansible controller
-      ansible.builtin.copy:
-        src: "{{ playbook_dir }}/admin.conf"
-        dest: "{{ lookup('env', 'HOME') }}/.kube/config"
-        mode: '0600'
-      delegate_to: localhost
-      become: false
 
     - name: Set kube-proxy mode to iptables (fixes nftables/legacy conflict on CentOS Stream 9)
       ansible.builtin.shell: |
@@ -176,3 +170,26 @@
         dest: "{{ playbook_dir }}/worker_join_command.txt"
       delegate_to: localhost
       become: false
+
+# Cluster admin access lives on the utility server (dns.lab.local), not the Mac.
+# See labs/admin. install_admin_tools.yml installs kubectl/helm/k9s there.
+- name: Install cluster kubeconfig on the admin host
+  hosts: admin_hosts
+  become: true
+
+  tasks:
+    - name: Create .kube directory for admin
+      ansible.builtin.file:
+        path: /home/admin/.kube
+        state: directory
+        owner: admin
+        group: admin
+        mode: '0700'
+
+    - name: Copy admin.conf to admin's kubeconfig
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/admin.conf"
+        dest: /home/admin/.kube/config
+        owner: admin
+        group: admin
+        mode: '0600'

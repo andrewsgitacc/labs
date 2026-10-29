@@ -1,0 +1,32 @@
+---
+# Adds the dynamic apps.lab.local zone (for external-dns) to the EXISTING DNS server.
+# Fresh builds get it automatically from configure_dns_server.yml.
+#
+# Usage: ansible-playbook -i dns_inventory.ini add_apps_zone.yml -k -K
+
+- name: Add dynamic apps.lab.local zone for external-dns
+  hosts: dns_servers
+  become: true
+
+  tasks:
+    - name: Configure apps.lab.local zone
+      ansible.builtin.include_tasks: tasks/apps_zone.yml
+
+    - name: Apply BIND changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Check the zone answers (SOA)
+      ansible.builtin.command: dig @127.0.0.1 apps.lab.local SOA +short
+      register: apps_soa
+      changed_when: false
+      failed_when: apps_soa.stdout == ""
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "apps.lab.local SOA: {{ apps_soa.stdout }}"
+
+  handlers:
+    - name: Restart BIND service
+      ansible.builtin.systemd_service:
+        name: named
+        state: restarted

@@ -3,6 +3,26 @@
 **Author:** Andrew Kyle — [LinkedIn](https://www.linkedin.com/in/andrew-kyle-1007591/)
 
 Deploys a 3-control-plane, 3-worker Kubernetes cluster on VMware Fusion using Ansible.
+This cluster is the base for the platform lab (see `labs/platform`).
+
+| Node | IP | vCPU / RAM | Extra disk |
+|---|---|---|---|
+| k8s-control-01..03 | 172.16.79.21–23 | 2 / 4 GB | — |
+| k8s-worker-01..03 | 172.16.79.31–33 | 4 / 10 GB | 100 GB thin `/dev/nvme0n2` (Ceph OSD, left empty) |
+
+- Kubernetes **v1.36** (set by `k8s_minor_version` in `02_install_k8s_software.yml`)
+- containerd, kubeadm, kube-proxy in iptables mode
+- **Calico** CNI (VXLAN, BGP off) — enforces NetworkPolicies
+
+> **Lab only — long-lived certificates.** `03_init_control_plane.yml` sets
+> `certificateValidityPeriod` to 99 years and `caCertificateValidityPeriod` to 100 years,
+> so `admin.conf` (copied to `~/.kube/config` on the Mac) and the cluster's own
+> certificates never expire in practice. This is **not** a production setting: real
+> clusters keep the kubeadm defaults (1-year certificates, 10-year CA), renew with
+> `kubeadm certs renew` or during `kubeadm upgrade`, and give people short-lived
+> credentials through SSO instead of sharing `admin.conf`.
+>
+> Check expiry dates on a control node: `sudo kubeadm certs check-expiration`
 
 ## Note
 
@@ -16,6 +36,7 @@ VMware Fusion uses NAT networking — you can't change vSwitch security policies
   - Password: `admin` *(lab only)*
 - Ansible (on Mac)
 - DNS server deployed — see `labs/dns`
+- About 44 GB of free RAM on the Mac (stop the Puppet/Jenkins lab VMs first) and ~300 GB free disk for the thin Ceph disks as they fill
 
 ## Deployment
 
@@ -40,17 +61,43 @@ ansible-playbook -i k8s_inventory.ini 03_init_control_plane.yml -k -K
 # 4. Join worker and second control plane nodes
 ansible-playbook -i k8s_inventory.ini 04_join_nodes.yml -k -K
 
-# 5. Install Flannel CNI (VXLAN backend — Cilium has limitations on VMware Fusion)
-ansible-playbook -i k8s_inventory.ini 05_install_flannel.yml -k -K
+# 5. Install Calico CNI (VXLAN, BGP off — Cilium has limitations on VMware Fusion)
+ansible-playbook -i k8s_inventory.ini 05_install_calico.yml -k -K
 
 # 6. Configure firewall for CNI
 #    Fixes kube-proxy ClusterIP failures caused by legacy xt_tables on CentOS Stream 9
 ansible-playbook -i k8s_inventory.ini 06_configure_firewall_for_cni.yml -k -K
 ```
 
+## Adding nodes later (join tokens)
+
+The join commands saved by `03_init_control_plane.yml` expire: the token after
+**24 hours** and the control-plane certificate key after **2 hours**. Nodes that have
+already joined are not affected — the token is only used once, to join. To join a
+node after that, re-run 03 (it skips `kubeadm init` on an existing cluster and writes
+fresh join commands), then 04:
+
+```bash
+ansible-playbook -i k8s_inventory.ini 03_init_control_plane.yml -k -K
+ansible-playbook -i k8s_inventory.ini 04_join_nodes.yml -k -K
+```
+
+## Cluster admin access
+
+`03_init_control_plane.yml` installs the admin kubeconfig on the utility server
+(`dns.lab.local`), where `labs/admin` installs kubectl, helm and k9s:
+
+```bash
+ssh admin@dns.lab.local
+kubectl get nodes
+```
+
+A git-ignored copy is also kept on the Mac at `k8s/admin.conf` so the playbooks can
+hand it over. Nothing is copied to the Mac's `~/.kube/config`.
+
 ## Verification
 
-SSH to a control node:
+SSH to a control node (or the utility server):
 
 ```bash
 ssh -q -l admin "$(dig @172.16.79.10 k8s-api.lab.local +short | tail -1)"
@@ -138,7 +185,7 @@ kubectl rollout history deployment/nginx
 kubectl delete deployment nginx
 ```
 
-### Cross-pod networking (Flannel)
+### Cross-pod networking (Calico)
 
 ```bash
 kubectl create deployment server --image=nginx
@@ -160,14 +207,63 @@ curl http://172.16.79.33:$NODEPORT
 kubectl delete deployment nginx && kubectl delete service nginx
 ```
 
-### Flannel pod status and routes
+### Calico status and routes
 
 ```bash
-kubectl get pods -n kube-flannel -o wide
-kubectl logs -n kube-flannel -l app=flannel | tail -20
+kubectl get tigerastatus                 # all AVAILABLE=True
+kubectl get pods -n calico-system -o wide
 
-# Run from Mac — each node should have routes to other nodes' pod CIDRs
-ssh -q -t admin@172.16.79.31 "ip route | grep 10.244"
+# Run from Mac — each node has a vxlan.calico interface and routes to other nodes' pod blocks
+ssh -q -t admin@172.16.79.31 "ip -d link show vxlan.calico; ip route | grep 10.244"
+```
+
+### NetworkPolicy (needs Calico — Flannel ignored these)
+
+```bash
+kubectl create namespace np-test
+kubectl -n np-test create deployment web --image=nginx
+kubectl -n np-test expose deployment web --port=80
+kubectl -n np-test wait --for=condition=available deployment/web --timeout=60s
+
+# 1. Works before any policy
+kubectl -n np-test run client --image=curlimages/curl --rm -it --restart=Never -- curl -s -m 5 web | head -4
+
+# 2. Deny all ingress in the namespace — the same curl now times out
+kubectl apply -n np-test -f - <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+spec:
+  podSelector: {}
+  policyTypes: [Ingress]
+EOF
+kubectl -n np-test run client --image=curlimages/curl --rm -it --restart=Never -- curl -s -m 5 web || echo "blocked (expected)"
+
+# 3. Allow only pods labelled role=client — works again for them
+kubectl apply -n np-test -f - <<'EOF'
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-client
+spec:
+  podSelector:
+    matchLabels: {app: web}
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: {role: client}
+EOF
+kubectl -n np-test run client --labels=role=client --image=curlimages/curl --rm -it --restart=Never -- curl -s -m 5 web | head -4
+
+kubectl delete namespace np-test
+```
+
+### Ceph disks on the workers
+
+```bash
+# Run from Mac — each worker should show an empty 100G nvme0n2 (no partitions, no filesystem)
+for ip in 172.16.79.31 172.16.79.32 172.16.79.33; do ssh -q admin@$ip "hostname; lsblk -f /dev/nvme0n2"; done
 ```
 
 ### Resource limits
