@@ -138,17 +138,18 @@ runbook is in its README. In short, on the utility server:
 | Step | Component | Result |
 |---|---|---|
 | 1 | MetalLB | LoadBalancer IPs from 172.16.79.100–.119; tested from the Mac on .119 |
-| 2 | cert-manager | Internal `Lab Root CA` + `lab-ca` issuer; CA public cert trusted on the Mac |
+| 2 | cert-manager | Internal `Lab Root CA` + `lab-ca` issuer; CA trusted on the utility server (not the Mac: Mac uses `curl -k`) |
 | 3 | Envoy Gateway | `lab-gateway` on 172.16.79.100, HTTPS for `*.apps.lab.local` (auto-renewed wildcard cert) |
 | 4 | external-dns | `<name>.apps.lab.local` records created/removed on dns.lab.local via signed RFC2136 updates |
-| 5 | hello app | https://hello.apps.lab.local works in the Mac browser with a trusted certificate |
+| 5 | hello app | `curl -k https://hello.apps.lab.local` works from the Mac (browser shows a cert warning) |
 
 Design choices:
 
 - **Envoy Gateway** rather than ingress-nginx (being retired) or Traefik: it implements the
   Kubernetes **Gateway API**, the standard that replaces Ingress.
 - **One shared gateway** with a wildcard certificate. Apps only add an HTTPRoute; DNS and TLS follow.
-- **The CA private key stays in the cluster.** Only its public certificate leaves, to be trusted.
+- **The CA private key stays in the cluster.** Only its public certificate leaves, trusted on the
+  utility server. The Mac's trust store is left alone, so Mac `curl` uses `-k`.
 - **Helm from the utility server for now.** The same chart versions, values and manifests are
   adopted by Argo CD in Phase 3 without reinstalling anything.
 
