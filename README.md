@@ -12,7 +12,7 @@ Kubernetes, GitOps, CI/CD, storage and observability, with everything in GitHub.
 | Lab | What it builds | Hosts |
 |---|---|---|
 | [`dns`](dns/) | BIND DNS for `lab.local`, plus a dynamic `apps.lab.local` zone for Kubernetes external-dns. Also the lab's **utility server** | `dns.lab.local` 172.16.79.10 |
-| [`admin`](admin/) | Admin CLI tools on the utility server: kubectl, helm, k9s, stern, yq, jq, gh | `dns.lab.local` |
+| [`admin`](admin/) | Admin CLI tools on the utility server: kubectl, helm, k9s, stern, yq, jq, gh, argocd | `dns.lab.local` |
 | [`k8s`](k8s/) | Kubernetes v1.36 with kubeadm: 3 control planes, 3 workers, Calico CNI (NetworkPolicies), 100 GB Ceph disk per worker | .21–.23, .31–.33 |
 | [`jenkins`](jenkins/) | Jenkins CI server, configured as code (JCasC), jobs as code | `jenkins.lab.local` 172.16.79.60 |
 | [`puppet`](puppet/) | OpenVox (Puppet) server + 2 agents; code in [puppet-control-repo](https://github.com/andrewsgitacc/puppet-control-repo), deployed with r10k | .70–.72 |
@@ -26,7 +26,7 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 |---|---|---|---|
 | 1 | Prep | Cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), dynamic DNS zone, admin tools, new repos | ✅ Done |
 | 2 | Cluster foundation | MetalLB, Envoy Gateway (Gateway API), cert-manager with an internal CA, external-dns | ✅ Done |
-| 3 | Argo CD | GitOps: everything after this is deployed from Git | ⏭️ Next |
+| 3 | Argo CD | GitOps: everything after this is deployed from Git | 🚧 In progress |
 | 4 | Sealed Secrets | Encrypted secrets stored safely in Git | Planned |
 | 5 | Rook-Ceph | Block, file and S3-compatible object storage | Planned |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | Planned |
