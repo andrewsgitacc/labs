@@ -42,8 +42,8 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 | # | Phase | Status |
 |---|---|---|
 | 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | ✅ done |
-| 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | next |
-| 3 | Argo CD (self-managed; GitOps from here) | |
+| 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
+| 3 | Argo CD (self-managed; GitOps from here) | next |
 | 4 | Sealed Secrets | |
 | 5 | Rook-Ceph (block, file, S3 object) | |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
@@ -128,6 +128,30 @@ Or create them in the GitHub web UI, then clone them into `~/GitHub` on the Mac.
 - [ ] `/dev/nvme0n2` (100G, empty) on all 3 workers
 - [ ] Three new repos exist
 - [ ] `ansible-lint` GitHub Actions check green on the Phase 1 PR
+
+## Phase 2: cluster foundation
+
+Everything for this phase lives in
+[platform-gitops](https://github.com/andrewsgitacc/platform-gitops); the step-by-step
+runbook is in its README. In short, on the utility server:
+
+| Step | Component | Result |
+|---|---|---|
+| 1 | MetalLB | LoadBalancer IPs from 172.16.79.100–.119; tested from the Mac on .119 |
+| 2 | cert-manager | Internal `Lab Root CA` + `lab-ca` issuer; CA trusted on the utility server (not the Mac: Mac uses `curl -k`) |
+| 3 | Envoy Gateway | `lab-gateway` on 172.16.79.100, HTTPS for `*.apps.lab.local` (auto-renewed wildcard cert) |
+| 4 | external-dns | `<name>.apps.lab.local` records created/removed on dns.lab.local via signed RFC2136 updates |
+| 5 | hello app | `curl -k https://hello.apps.lab.local` works from the Mac (browser shows a cert warning) |
+
+Design choices:
+
+- **Envoy Gateway** rather than ingress-nginx (being retired) or Traefik: it implements the
+  Kubernetes **Gateway API**, the standard that replaces Ingress.
+- **One shared gateway** with a wildcard certificate. Apps only add an HTTPRoute; DNS and TLS follow.
+- **The CA private key stays in the cluster.** Only its public certificate leaves, trusted on the
+  utility server. The Mac's trust store is left alone, so Mac `curl` uses `-k`.
+- **Helm from the utility server for now.** The same chart versions, values and manifests are
+  adopted by Argo CD in Phase 3 without reinstalling anything.
 
 ## Notes
 
