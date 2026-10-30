@@ -1,7 +1,7 @@
 ---
 # Install the platform admin CLI tools on the utility server (dns.lab.local).
 #
-#   kubectl, helm, k9s, stern, yq, jq, git, gh, dig/nsupdate
+#   kubectl, helm, k9s, stern, yq, jq, git, gh, dig/nsupdate, argocd
 #
 # Usage (from the Mac, in admin/):
 #   ansible-playbook -i admin_inventory.ini install_admin_tools.yml -k -K
@@ -110,13 +110,21 @@
         mode: '0755'
         force: true
 
+    - name: Install argocd CLI (checksum-verified)
+      ansible.builtin.get_url:
+        url: "https://github.com/argoproj/argo-cd/releases/download/{{ argocd_version }}/argocd-linux-{{ arch }}"
+        dest: "{{ install_dir }}/argocd"
+        checksum: "sha256:https://github.com/argoproj/argo-cd/releases/download/{{ argocd_version }}/cli_checksums.txt"
+        mode: '0755'
+
     # ---- Shell convenience ------------------------------------------------------
-    - name: Add bash completion for kubectl, helm and stern
+    - name: Add bash completion for kubectl, helm, stern and argocd
       ansible.builtin.shell: |
         set -o pipefail
         {{ install_dir }}/helm completion bash > /etc/bash_completion.d/helm
         /usr/bin/kubectl completion bash > /etc/bash_completion.d/kubectl
         {{ install_dir }}/stern --completion bash > /etc/bash_completion.d/stern
+        {{ install_dir }}/argocd completion bash > /etc/bash_completion.d/argocd
       args:
         executable: /bin/bash
       changed_when: true
@@ -167,6 +175,7 @@
         echo "yq:      $(yq --version)"
         echo "jq:      $(jq --version)"
         echo "gh:      $(gh --version | head -1)"
+        echo "argocd:  $(argocd version --client --short 2>/dev/null)"
         echo "git:     $(git --version)"
       changed_when: false
       register: tool_versions

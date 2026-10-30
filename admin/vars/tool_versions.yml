@@ -11,3 +11,6 @@ helm_version: "v4.2.4"   # https://github.com/helm/helm/releases
 k9s_version: "v0.51.0"   # https://github.com/derailed/k9s/releases
 stern_version: "1.34.0"  # https://github.com/stern/stern/releases (no "v" in file names)
 yq_version: "v4.54.1"    # https://github.com/mikefarah/yq/releases
+
+# Keep in step with the Argo CD server (platform-gitops components/argocd/chart.yaml)
+argocd_version: "v3.5.4" # https://github.com/argoproj/argo-cd/releases

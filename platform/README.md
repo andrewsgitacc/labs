@@ -43,7 +43,7 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 |---|---|---|
 | 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | ✅ done |
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
-| 3 | Argo CD (self-managed; GitOps from here) | next |
+| 3 | Argo CD (self-managed; GitOps from here) | 🚧 in progress |
 | 4 | Sealed Secrets | |
 | 5 | Rook-Ceph (block, file, S3 object) | |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
@@ -152,6 +152,31 @@ Design choices:
   utility server. The Mac's trust store is left alone, so Mac `curl` uses `-k`.
 - **Helm from the utility server for now.** The same chart versions, values and manifests are
   adopted by Argo CD in Phase 3 without reinstalling anything.
+
+## Phase 3: Argo CD (GitOps)
+
+From this phase, **Git drives the cluster**: a merged pull request to
+[platform-gitops](https://github.com/andrewsgitacc/platform-gitops) `main` is a deployment,
+and manual changes in the cluster are reverted. Runbook in the platform-gitops README.
+
+| Piece | What it does |
+|---|---|
+| Argo CD (Helm chart, Argo CD v3.5.4) | Installed once with `install.sh`, then manages **itself** |
+| `bootstrap/root.yaml` | The only thing applied by hand: the root "app of apps" |
+| `components` ApplicationSet | One Application per `components/<name>/` (chart + values + manifests) |
+| `apps` ApplicationSet | One Application per `apps/<name>/` |
+| https://argocd.apps.lab.local | UI and CLI through lab-gateway (DNS and TLS automatic) |
+| `argocd` CLI | Added to the utility server's admin tools |
+
+Design choices:
+
+- **ApplicationSets over hand-written Applications.** Adding a component or app is adding a
+  folder; there's no list of Applications to keep in sync.
+- **Adopt, don't reinstall.** Argo CD renders the same chart versions, values and release names
+  Helm used in Phase 2, so it takes over the running resources without downtime. The Helm
+  release records are then removed (never `helm uninstall`, which would delete the resources).
+- **Automated sync with prune and self-heal.** Git is the only way to change the platform.
+- **Polling, not webhooks.** GitHub can't reach the lab, so Argo CD checks Git every ~3 minutes.
 
 ## Notes
 
