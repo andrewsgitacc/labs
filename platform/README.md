@@ -42,8 +42,8 @@ environment: everything in GitHub, CI with GitHub Actions, CD with Argo CD and K
 | # | Phase | Status |
 |---|---|---|
 | 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | ✅ done |
-| 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | 🚧 in progress |
-| 3 | Argo CD (self-managed; GitOps from here) | |
+| 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
+| 3 | Argo CD (self-managed; GitOps from here) | next |
 | 4 | Sealed Secrets | |
 | 5 | Rook-Ceph (block, file, S3 object) | |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
