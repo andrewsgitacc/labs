@@ -17,6 +17,9 @@
   hosts: "{{ target | default('workers') }}"
   serial: 1
   gather_facts: false
+  # No sudo by default: the vmrun / vmware-vdiskmanager steps run on the Mac as you.
+  # Steps on the cluster nodes turn it on individually (become: true).
+  become: false
   vars:
     root_disk_size: 40GB
     vm_name: "{{ inventory_hostname.split('.')[0] }}"
