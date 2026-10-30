@@ -1,0 +1,43 @@
+---
+# Grow the root filesystem to fill its (already enlarged) virtual disk.
+# Works whether / is on LVM (CentOS default: cs-root) or a plain partition.
+# Safe to re-run: does nothing if there's no new space.
+
+- name: Install growpart
+  ansible.builtin.dnf:
+    name: cloud-utils-growpart
+    state: present
+
+- name: Grow partition, LVM and filesystem for /
+  ansible.builtin.shell: |
+    set -euo pipefail
+    SRC=$(findmnt -n -o SOURCE /)
+    if lvs "$SRC" >/dev/null 2>&1; then
+      VG=$(lvs --noheadings -o vg_name "$SRC" | tr -d ' ')
+      PV=$(pvs --noheadings -o pv_name -S vg_name="$VG" | head -1 | tr -d ' ')
+    else
+      PV="$SRC"
+    fi
+    DISK=/dev/$(lsblk -no pkname "$PV")
+    PARTNUM=$(cat /sys/class/block/"$(basename "$PV")"/partition)
+    BEFORE=$(df -BG --output=size / | tail -1 | tr -d ' G')
+    # growpart exits 1 with NOCHANGE when the partition already fills the disk
+    growpart "$DISK" "$PARTNUM" || true
+    if lvs "$SRC" >/dev/null 2>&1; then
+      pvresize "$PV"
+      FREE=$(vgs --noheadings --units b --nosuffix -o vg_free "$VG" | tr -d ' ')
+      if [ "$FREE" -gt 0 ]; then lvextend -r -l +100%FREE "$SRC"; fi
+    else
+      xfs_growfs /
+    fi
+    AFTER=$(df -BG --output=size / | tail -1 | tr -d ' G')
+    echo "root filesystem: ${BEFORE}G -> ${AFTER}G"
+    [ "$AFTER" -gt "$BEFORE" ] && echo CHANGED || true
+  args:
+    executable: /bin/bash
+  register: grow_root
+  changed_when: "'CHANGED' in grow_root.stdout"
+
+- name: Show root filesystem size
+  ansible.builtin.debug:
+    msg: "{{ grow_root.stdout_lines | select('match', '^root filesystem') | list }}"

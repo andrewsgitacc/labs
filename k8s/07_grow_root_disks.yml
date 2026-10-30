@@ -1,0 +1,99 @@
+---
+# Grow the system disk of existing k8s nodes IN PLACE, one node at a time.
+#
+# The template's ~13 GB system disk is too small for a node running platform
+# images (Argo CD, Envoy, Ceph...): the kubelet hits DiskPressure and evicts pods.
+# New builds get bigger disks from provision_k8s_nodes.yml; this fixes a running cluster.
+#
+# For each node: drain -> power off -> enlarge the .vmdk -> power on ->
+# grow partition/LVM/filesystem -> uncordon. Workloads move to the other nodes meanwhile.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K                 # workers, 40GB
+#   ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K \
+#     -e target=control_plane -e root_disk_size=20GB                                   # control planes
+
+- name: Grow system disks in place
+  hosts: "{{ target | default('workers') }}"
+  serial: 1
+  gather_facts: false
+  vars:
+    root_disk_size: 40GB
+    vm_name: "{{ inventory_hostname.split('.')[0] }}"
+    vm_dir: "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm"
+    vmx: "{{ vm_dir }}/{{ vm_name }}.vmx"
+    vmrun: "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+    vdiskmanager: "/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager"
+    kubectl_host: k8s-control-01.lab.local
+
+  tasks:
+    - name: Drain node
+      ansible.builtin.command: >
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets
+        --delete-emptydir-data --force --timeout=180s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      changed_when: true
+      # Draining the node you're delegating kubectl to (target=control_plane) still works:
+      # kubectl talks to the API, not the local node.
+
+    - name: Power off VM
+      ansible.builtin.command: '"{{ vmrun }}" stop "{{ vmx }}" soft'
+      delegate_to: localhost
+      changed_when: true
+
+    # The system disk is nvme0:0; read its file name from the .vmx (clones may rename it).
+    - name: Find the system disk file
+      ansible.builtin.shell: awk -F'"' '/^nvme0:0\.fileName/ {print $2}' "{{ vmx }}"
+      delegate_to: localhost
+      register: root_vmdk
+      changed_when: false
+      failed_when: root_vmdk.stdout == ""
+
+    - name: Enlarge system disk to {{ root_disk_size }}
+      ansible.builtin.command: '"{{ vdiskmanager }}" -x {{ root_disk_size }} "{{ vm_dir }}/{{ root_vmdk.stdout }}"'
+      delegate_to: localhost
+      register: expand
+      changed_when: expand.rc == 0
+      # Fails harmlessly if the disk is already this size; the filesystem step below
+      # shows the real result.
+      failed_when: false
+
+    - name: Show disk resize result
+      ansible.builtin.debug:
+        msg: "{{ (expand.stdout_lines + expand.stderr_lines) | select | list }}"
+
+    - name: Power on VM
+      ansible.builtin.command: '"{{ vmrun }}" start "{{ vmx }}" gui'
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        delay: 15
+        timeout: 300
+
+    - name: Grow root filesystem
+      ansible.builtin.include_tasks:
+        file: tasks/grow_root_fs.yml
+        apply:
+          become: true
+
+    - name: Wait for node Ready
+      ansible.builtin.command: >
+        kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      changed_when: false
+
+    - name: Uncordon node
+      ansible.builtin.command: kubectl uncordon {{ inventory_hostname }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      changed_when: true
