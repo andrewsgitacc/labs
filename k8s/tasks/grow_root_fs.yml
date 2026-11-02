@@ -2,6 +2,23 @@
 # Grow the root filesystem to fill its (already enlarged) virtual disk.
 # Works whether / is on LVM (CentOS default: cs-root) or a plain partition.
 # Safe to re-run: does nothing if there's no new space.
+# Copes with a completely full root filesystem (the usual reason to grow it):
+# frees a little space first and gives growpart scratch space in RAM (/dev/shm).
+
+- name: Free some space if the root filesystem is (nearly) full
+  ansible.builtin.shell: |
+    set -o pipefail
+    AVAIL_MB=$(df -BM --output=avail / | tail -1 | tr -d ' M')
+    if [ "$AVAIL_MB" -lt 300 ]; then
+      journalctl --vacuum-size=50M
+      dnf clean all
+      command -v crictl >/dev/null && crictl rmi --prune || true
+      echo FREED
+    fi
+  args:
+    executable: /bin/bash
+  register: free_space
+  changed_when: "'FREED' in free_space.stdout"
 
 - name: Install growpart
   ansible.builtin.dnf:
@@ -21,8 +38,15 @@
     DISK=/dev/$(lsblk -no pkname "$PV")
     PARTNUM=$(cat /sys/class/block/"$(basename "$PV")"/partition)
     BEFORE=$(df -BG --output=size / | tail -1 | tr -d ' G')
-    # growpart exits 1 with NOCHANGE when the partition already fills the disk
-    growpart "$DISK" "$PARTNUM" || true
+    # growpart exits 1 with NOCHANGE when the partition already fills the disk;
+    # any other failure is real and must stop the play.
+    set +e
+    GP_OUT=$(TMPDIR=/dev/shm growpart "$DISK" "$PARTNUM" 2>&1); GP_RC=$?
+    set -e
+    echo "growpart: $GP_OUT"
+    if [ "$GP_RC" -ne 0 ] && ! grep -q NOCHANGE <<<"$GP_OUT"; then
+      echo "growpart failed (rc=$GP_RC)" >&2; exit 1
+    fi
     if lvs "$SRC" >/dev/null 2>&1; then
       pvresize "$PV"
       FREE=$(vgs --noheadings --units b --nosuffix -o vg_free "$VG" | tr -d ' ')
