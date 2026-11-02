@@ -5,10 +5,13 @@
 Deploys a 3-control-plane, 3-worker Kubernetes cluster on VMware Fusion using Ansible.
 This cluster is the base for the platform lab (see `labs/platform`).
 
-| Node | IP | vCPU / RAM | Extra disk |
-|---|---|---|---|
-| k8s-control-01..03 | 172.16.79.21–23 | 2 / 4 GB | — |
-| k8s-worker-01..03 | 172.16.79.31–33 | 4 / 10 GB | 100 GB thin `/dev/nvme0n2` (Ceph OSD, left empty) |
+| Node | IP | vCPU / RAM | System disk | Extra disk |
+|---|---|---|---|---|
+| k8s-control-01..03 | 172.16.79.21–23 | 2 / 4 GB | 20 GB | — |
+| k8s-worker-01..03 | 172.16.79.31–33 | 4 / 10 GB | 40 GB | 100 GB thin `/dev/nvme0n2` (Ceph OSD, left empty) |
+
+The template's system disk (~13 GB) is enlarged during provisioning and the root
+filesystem grown to match. All disks are thin provisioned.
 
 - Kubernetes **v1.36** (set by `k8s_minor_version` in `02_install_k8s_software.yml`)
 - containerd, kubeadm, kube-proxy in iptables mode
@@ -68,6 +71,22 @@ ansible-playbook -i k8s_inventory.ini 05_install_calico.yml -k -K
 #    Fixes kube-proxy ClusterIP failures caused by legacy xt_tables on CentOS Stream 9
 ansible-playbook -i k8s_inventory.ini 06_configure_firewall_for_cni.yml -k -K
 ```
+
+## Growing system disks on a running cluster
+
+Nodes built before the disk sizes above (or that need more space) can be grown **in place**,
+one node at a time: drain → power off → enlarge the `.vmdk` → power on → grow
+partition/LVM/filesystem → uncordon.
+
+```bash
+# Workers to 40 GB
+ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K
+# Control planes to 20 GB
+ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K -e target=control_plane -e root_disk_size=20GB
+```
+
+Symptom that you need it: nodes show `DiskPressure`, are tainted
+`node.kubernetes.io/disk-pressure`, and pods are `Evicted`.
 
 ## Adding nodes later (join tokens)
 

@@ -10,14 +10,16 @@
     vdiskmanager: "/Applications/VMware Fusion.app/Contents/Library/vmware-vdiskmanager"
 
     # Workers carry the platform (Ceph, Prometheus, Harbor...) so they get most of the RAM.
+    # root_disk: the template's ~13 GB system disk is enlarged to this (thin provisioned);
+    #   workers need room for container images or the kubelet evicts pods (DiskPressure).
     # ceph_disk: true adds a second, empty, thin-provisioned disk used as a Ceph OSD.
     k8s_nodes:
-      - { name: "k8s-control-01", cpus: "2", ram: "4096" }
-      - { name: "k8s-control-02", cpus: "2", ram: "4096" }
-      - { name: "k8s-control-03", cpus: "2", ram: "4096" }
-      - { name: "k8s-worker-01",  cpus: "4", ram: "10240", ceph_disk: true }
-      - { name: "k8s-worker-02",  cpus: "4", ram: "10240", ceph_disk: true }
-      - { name: "k8s-worker-03",  cpus: "4", ram: "10240", ceph_disk: true }
+      - { name: "k8s-control-01", cpus: "2", ram: "4096",  root_disk: "20GB" }
+      - { name: "k8s-control-02", cpus: "2", ram: "4096",  root_disk: "20GB" }
+      - { name: "k8s-control-03", cpus: "2", ram: "4096",  root_disk: "20GB" }
+      - { name: "k8s-worker-01",  cpus: "4", ram: "10240", root_disk: "40GB", ceph_disk: true }
+      - { name: "k8s-worker-02",  cpus: "4", ram: "10240", root_disk: "40GB", ceph_disk: true }
+      - { name: "k8s-worker-03",  cpus: "4", ram: "10240", root_disk: "40GB", ceph_disk: true }
 
     # Ceph OSD disk: thin provisioned, so it only uses Mac disk space as Ceph fills it.
     # Attached as the second namespace on the template's NVMe controller (nvme0:1),
@@ -60,6 +62,26 @@
     - name: Inject custom Memory allocations into vmx file
       ansible.builtin.command: "sed -i '' 's/^memsize =.*/memsize = \"{{ item.ram }}\"/g' \"/Users/andrew/Virtual Machines.localized/{{ item.name }}.vmwarevm/{{ item.name }}.vmx\""
       loop: "{{ k8s_nodes }}"
+
+    # The system disk is nvme0:0; read its file name from the .vmx (clones may rename it).
+    # The guest's partition/LVM/filesystem is grown to match in 01_configure_k8s_cluster.yml.
+    - name: Find each VM's system disk file
+      ansible.builtin.shell: >
+        awk -F'"' '/^nvme0:0\.fileName/ {print $2}'
+        "{{ vm_dir }}/{{ item.name }}.vmwarevm/{{ item.name }}.vmx"
+      loop: "{{ k8s_nodes | selectattr('root_disk', 'defined') | list }}"
+      register: root_vmdks
+      changed_when: false
+      failed_when: root_vmdks.stdout == ""   # (inside a loop: this item's result)
+
+    - name: Enlarge the system disk (thin provisioned)
+      ansible.builtin.command: >
+        "{{ vdiskmanager }}" -x {{ item.item.root_disk }}
+        "{{ vm_dir }}/{{ item.item.name }}.vmwarevm/{{ item.stdout }}"
+      loop: "{{ root_vmdks.results }}"
+      loop_control:
+        label: "{{ item.item.name }}: {{ item.stdout }} -> {{ item.item.root_disk }}"
+      changed_when: true
 
     - name: Create the Ceph OSD disk on each worker (thin provisioned)
       ansible.builtin.command: >

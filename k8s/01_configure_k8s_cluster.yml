@@ -150,6 +150,9 @@
         - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { name: 'net.ipv4.ip_forward', value: '1' }
 
+    - name: Grow root filesystem to the enlarged system disk
+      ansible.builtin.include_tasks: tasks/grow_root_fs.yml
+
     - name: Reconfigure NetworkManager connection profiles to Static IPs
       community.general.nmcli:
         conn_name: "{{ ansible_default_ipv4.interface }}"
