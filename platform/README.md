@@ -94,7 +94,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
 | 4 | Sealed Secrets | ✅ done |
 | 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
-| 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | next |
+| 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | 🚧 in progress |
 | 7 | Keycloak SSO | |
 | 8 | Harbor | |
 | 9 | CI: ARC runners, sample-app pipeline, Renovate | |
@@ -300,20 +300,52 @@ everything else); **3-way replication across the workers**, so losing one worker
 data; **sizes cut down for the lab** (1 manager, 1 metadata server, OSD memory capped at
 ~1.5 GB); Ceph's own **S3 gateway** instead of MinIO for object storage.
 
+### Phase 6 — Observability
+
+Metrics, alerts, logs and dashboards for the whole platform: **Prometheus** and
+**Alertmanager**, **Grafana** (https://grafana.apps.lab.local), **Loki** for logs (stored in
+a Ceph S3 bucket) and **Alloy** collecting every pod's logs on every node. Ceph, Argo CD and
+cert-manager expose their metrics too.
+
+1. **GitHub:** merge the Phase 6 pull request in `platform-gitops`. Argo CD installs
+   everything (5–10 minutes):
+   ```bash
+   watch kubectl -n argocd get applications          # kube-prometheus-stack, loki, alloy: Synced + Healthy
+   kubectl -n monitoring get pods,pvc
+   ```
+2. **Mac:** https://prometheus.apps.lab.local → Status → Targets: everything **UP**.
+3. **Mac:** https://alertmanager.apps.lab.local: only **Watchdog** firing.
+4. **Mac:** https://grafana.apps.lab.local, **admin / admin** (lab only). Check the
+   Kubernetes dashboards and the **Platform** folder (Ceph, Argo CD).
+5. **Mac (Grafana):** Explore → Loki → `{namespace="hello"}` shows the hello app's logs.
+6. **Utility server:** `kubectl top nodes` — workers still have headroom.
+
+Done when: all targets up, only Watchdog firing, dashboards show data, logs searchable.
+Detailed runbook: [platform-gitops README → Phase 6](https://github.com/andrewsgitacc/platform-gitops#phase-6-runbook-observability).
+
+Design choices: **kube-prometheus-stack** (the standard bundle: operator, Prometheus,
+Alertmanager, Grafana, exporters, Kubernetes dashboards and alerts); **Loki + Alloy** for
+logs, queried in the same Grafana; Loki in **monolithic mode** with its data in **Ceph S3**;
+metrics and logs kept **7 days**; the kubeadm control-plane components (etcd, scheduler,
+controller-manager, kube-proxy) aren't scraped yet because they only listen on 127.0.0.1.
+
 ### Rebuilding the platform from scratch
 
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
 
-0. **Mac:** prepare the workers for Ceph: `cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K`
+1. **Mac:** prepare the workers for Ceph:
+   `cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K`
    (time sync with the lab NTP server is already part of playbook 01)
-1. **Mac:** copy the sealing key backup to the utility server:
+2. **Mac:** copy the sealing key backup to the utility server:
    `scp ~/lab-secrets/sealed-secrets-key.yaml admin@172.16.79.10:`
-2. **Utility server:** `cd ~/platform-gitops && git pull`
-3. **Utility server:** `./scripts/install.sh` — installs every component in order, restores the
-   sealing key before the Sealed Secrets controller starts, then Argo CD
-4. **Utility server:** `./scripts/export-lab-ca.sh`
-5. **Utility server:** Phase 3 steps 2–4 (password, `bootstrap/root.yaml`), then remove the
-   Helm records for everything `install.sh` installed (Argo CD owns it all now):
+3. **Utility server:** `cd ~/platform-gitops && git pull && ./scripts/install.sh` — installs
+   every component's CRDs, then Sealed Secrets (restoring the key), then Argo CD
+4. **Utility server:** Argo CD password and login (Phase 3 steps 2–3), then
+   `kubectl apply -f bootstrap/root.yaml` — Argo CD installs everything else from Git,
+   retrying until storage, CRDs and webhooks are ready (allow ~15–20 minutes)
+5. **Utility server:** once cert-manager is up, `./scripts/export-lab-ca.sh`; set the Ceph
+   dashboard password (Phase 5 step 5)
+6. **Utility server:** remove the Helm records `install.sh` left behind (Argo CD owns it all):
    ```bash
    helm list -A -o json | jq -r '.[] | "\(.namespace) \(.name)"' | while read -r ns name; do
      kubectl -n "$ns" delete secret -l owner=helm,name="$name"
