@@ -59,8 +59,9 @@ Leave **~15 GB** for macOS and your apps, and **power off the Jenkins and Puppet
 (another ~12 GB) while the platform is running. All disks are **thin provisioned**: they only
 use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total).
 
-**Per phase** (approximate; "worker RAM used" is what the platform consumes inside the
-30 GB of worker RAM, "Mac disk used" is real space used on the Mac by all lab VM disks)
+**Per phase** ("worker RAM used" is what the platform consumes inside the 30 GB of worker
+RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases marked
+*measured* are real figures from `kubectl top nodes`; the rest are estimates.
 
 | # | Phase | Adds | Worker RAM used (cumulative) | Mac disk used (cumulative) | Free Mac disk to have |
 |---|---|---|---|---|---|
@@ -68,16 +69,18 @@ use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total
 | 2 | Cluster foundation | MetalLB, cert-manager, Envoy Gateway, external-dns, hello | ~4 GB | ~45 GB | 100 GB |
 | 3 | Argo CD | Argo CD (server, repo server, controller, ApplicationSets, Redis) | ~6 GB | ~55 GB | 100 GB |
 | 4 | Sealed Secrets | controller | ~6 GB | ~55 GB | 100 GB |
-| 5 | Rook-Ceph | 3 monitors, managers, 3 OSDs, S3 gateway, file service | ~15 GB | ~70 GB | 150 GB |
-| 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | ~20 GB | ~100 GB (metrics/logs in Ceph) | 200 GB |
-| 7 | Keycloak | Keycloak + database | ~22 GB | ~105 GB | 200 GB |
-| 8 | Harbor | registry, database, Redis, Trivy scanner | ~25 GB | ~140 GB (images in Ceph) | 250 GB |
-| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~26–28 GB | ~160 GB | 250 GB |
-| 10 | Kargo | controller, API | ~27–29 GB | ~160 GB | 250 GB |
-| 11 | Hardening | Kyverno, Velero | ~28–30 GB | ~180 GB (backups) | 300 GB |
+| 5 | Rook-Ceph | 3 monitors, manager, 3 OSDs, S3 gateway, file service, metrics-server | **~9 GB** *measured* (~3 GB per worker, 30%) | ~70 GB | 150 GB |
+| 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | ~14 GB | ~100 GB (metrics/logs in Ceph) | 200 GB |
+| 7 | Keycloak | Keycloak + database | ~16 GB | ~105 GB | 200 GB |
+| 8 | Harbor | registry, database, Redis, Trivy scanner | ~19 GB | ~140 GB (images in Ceph) | 250 GB |
+| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~20–23 GB | ~160 GB | 250 GB |
+| 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
+| 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
 
-> **Watch the workers from Phase 5.** Ceph and observability take most of the 30 GB of worker
-> RAM. If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers to
+> **Watch the workers' memory** with `kubectl top nodes` after each phase. After Phase 5 the
+> workers sit at ~30% (Ceph's sizes are cut down for the lab), so the 30 GB should last; the
+> control planes run at ~70% of their 4 GB, which is normal and steady.
+> If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers to
 > 12 GB (`ram` in `k8s/provision_k8s_nodes.yml`, or the VM settings in Fusion, one node at a
 > time): +6 GB on the Mac, 50 GB of VMs in total. Disk space inside the VMs is checked with
 > `df -h /` on each node; Kubernetes evicts pods at ~85% full (see `k8s/README.md` → DiskPressure).
@@ -90,8 +93,8 @@ use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
 | 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
 | 4 | Sealed Secrets | ✅ done |
-| 5 | Rook-Ceph (block, file, S3 object) | 🚧 in progress |
-| 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
+| 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
+| 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | next |
 | 7 | Keycloak SSO | |
 | 8 | Harbor | |
 | 9 | CI: ARC runners, sample-app pipeline, Renovate | |
