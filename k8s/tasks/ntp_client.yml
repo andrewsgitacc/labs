@@ -1,0 +1,28 @@
+---
+# Sync this node's clock with the lab NTP server (dns.lab.local, 172.16.79.10) instead
+# of public servers, so all nodes agree closely (Ceph monitors allow at most 50 ms).
+
+- name: Install chrony
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+
+- name: Stop using the public pool servers
+  ansible.builtin.replace:
+    path: /etc/chrony.conf
+    regexp: '^(pool|server) (?!172\.16\.79\.10 ).*$'
+    replace: '# \g<0>   (disabled: lab NTP server below)'
+
+- name: Use the lab NTP server
+  ansible.builtin.blockinfile:
+    path: /etc/chrony.conf
+    marker: "# {mark} ANSIBLE MANAGED LAB NTP CLIENT"
+    block: |
+      server 172.16.79.10 iburst prefer
+
+- name: Restart chronyd and step the clock now
+  ansible.builtin.shell: |
+    systemctl restart chronyd
+    sleep 5
+    chronyc -a makestep
+  changed_when: true

@@ -72,6 +72,15 @@ ansible-playbook -i k8s_inventory.ini 05_install_calico.yml -k -K
 ansible-playbook -i k8s_inventory.ini 06_configure_firewall_for_cni.yml -k -K
 ```
 
+## Time sync
+
+All nodes sync their clocks with the lab NTP server on `dns.lab.local` (set up by
+`dns/add_ntp_server.yml`). New builds get this in playbook 01; for an existing cluster:
+
+```bash
+ansible-playbook -i k8s_inventory.ini 09_configure_time_sync.yml -k -K
+```
+
 ## Preparing the workers for Ceph
 
 Before the platform's Rook-Ceph phase (and after every cluster rebuild), load the kernel
@@ -386,6 +395,19 @@ kubectl delete pdb nginx-pdb && kubectl delete deployment nginx
 Need a min of 3 control nodes to maintain a quorum if a control node is lost. If quorum is lost, the API server goes read-only.
 
 ## Troubleshooting
+
+### Clock skew (Ceph `MON_CLOCK_SKEW`)
+
+`ceph health detail` shows "clock skew detected on mon.X". Check each node's offset and
+source from the Mac:
+
+```bash
+for ip in 172.16.79.31 172.16.79.32 172.16.79.33; do ssh -q admin@$ip "hostname; chronyc tracking | grep -E 'Reference ID|System time'"; done
+```
+
+The reference should be `172.16.79.10` and the offset well under 0.01 s. If not, run
+`dns/add_ntp_server.yml` and then `09_configure_time_sync.yml`. Ceph clears the warning
+within a few minutes.
 
 ### DiskPressure: pods Evicted, nodes tainted, gateway "no route to host"
 

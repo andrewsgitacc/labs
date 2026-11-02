@@ -153,6 +153,9 @@
     - name: Grow root filesystem to the enlarged system disk
       ansible.builtin.include_tasks: tasks/grow_root_fs.yml
 
+    - name: Sync the clock with the lab NTP server (dns.lab.local)
+      ansible.builtin.include_tasks: tasks/ntp_client.yml
+
     - name: Reconfigure NetworkManager connection profiles to Static IPs
       community.general.nmcli:
         conn_name: "{{ ansible_default_ipv4.interface }}"

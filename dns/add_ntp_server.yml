@@ -1,0 +1,31 @@
+---
+# Make the EXISTING DNS server the lab's NTP server.
+# Fresh builds get it from configure_dns_server.yml.
+#
+# Usage: ansible-playbook -i dns_inventory.ini add_ntp_server.yml -k -K
+
+- name: Lab NTP server
+  hosts: dns_servers
+  become: true
+
+  tasks:
+    - name: Configure NTP server
+      ansible.builtin.include_tasks: tasks/ntp_server.yml
+
+    - name: Apply chrony changes now
+      ansible.builtin.meta: flush_handlers
+
+    - name: Show upstream sync status
+      ansible.builtin.command: chronyc tracking
+      register: tracking
+      changed_when: false
+
+    - name: Print sync status
+      ansible.builtin.debug:
+        var: tracking.stdout_lines
+
+  handlers:
+    - name: Restart chronyd
+      ansible.builtin.systemd_service:
+        name: chronyd
+        state: restarted

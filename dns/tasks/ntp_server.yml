@@ -1,0 +1,37 @@
+---
+# Make the DNS / utility server the lab's time server.
+#
+# It syncs with public NTP servers; every other lab VM syncs with it over the local
+# network, so their clocks agree to within a millisecond or so. (Syncing each VM
+# separately across Fusion's NAT leaves them tens of ms apart - enough for Ceph
+# monitors to report MON_CLOCK_SKEW.)
+# The calling play must define the "Restart chronyd" handler.
+
+- name: Install chrony
+  ansible.builtin.dnf:
+    name: chrony
+    state: present
+
+- name: Serve time to the lab network
+  ansible.builtin.blockinfile:
+    path: /etc/chrony.conf
+    marker: "# {mark} ANSIBLE MANAGED LAB NTP SERVER"
+    block: |
+      # Answer NTP requests from the lab VMs
+      allow 172.16.79.0/24
+      # Keep serving (as a low-quality source) even if the internet is unreachable
+      local stratum 10
+  notify: Restart chronyd
+
+- name: Allow NTP through firewalld
+  ansible.posix.firewalld:
+    service: ntp
+    permanent: true
+    state: enabled
+    immediate: true
+
+- name: Ensure chronyd is running and enabled
+  ansible.builtin.systemd_service:
+    name: chronyd
+    state: started
+    enabled: true
