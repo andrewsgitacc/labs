@@ -4,6 +4,18 @@
 
 Deploys a VM from template and installs BIND.
 
+## Lab time server (NTP)
+
+`dns.lab.local` is also the lab's **NTP server**: it syncs with public NTP servers and
+every lab VM syncs with it over the local network (`k8s/09_configure_time_sync.yml`), so
+the VMs' clocks agree to within a millisecond or so. Syncing each VM separately across
+Fusion's NAT left them tens of milliseconds apart, enough for Ceph to warn
+`MON_CLOCK_SKEW` (limit 50 ms).
+
+- Fresh builds: included in `configure_dns_server.yml`.
+- Existing server: `ansible-playbook -i dns_inventory.ini add_ntp_server.yml -k -K`
+- Check: `chronyc tracking` on the DNS server; `chronyc sources` on a node shows `172.16.79.10`.
+
 ## Utility server
 
 `dns.lab.local` is also the lab's **utility server**: it holds the platform admin CLI

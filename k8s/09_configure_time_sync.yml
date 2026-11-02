@@ -1,0 +1,33 @@
+---
+# Sync all k8s nodes' clocks with the lab NTP server (dns.lab.local).
+# Fixes Ceph's MON_CLOCK_SKEW warning. Run dns/add_ntp_server.yml first.
+# Fresh builds get this from 01_configure_k8s_cluster.yml.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 09_configure_time_sync.yml -k -K
+
+- name: Sync node clocks with the lab NTP server
+  hosts: new_cluster_nodes
+  become: true
+
+  tasks:
+    - name: Configure chrony client
+      ansible.builtin.include_tasks: tasks/ntp_client.yml
+
+    - name: Wait for chrony to settle
+      ansible.builtin.pause:
+        seconds: 15
+
+    - name: Show sync status
+      ansible.builtin.shell: |
+        set -o pipefail
+        chronyc sources | tail -n +3
+        chronyc tracking | grep -E 'Reference ID|System time'
+      args:
+        executable: /bin/bash
+      register: sync_status
+      changed_when: false
+
+    - name: Print sync status
+      ansible.builtin.debug:
+        var: sync_status.stdout_lines

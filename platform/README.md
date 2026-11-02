@@ -255,9 +255,12 @@ Ceph turns the empty 100 GB disk on each worker into replicated storage: **block
 **S3 object storage** (`ceph-bucket`, https://s3.apps.lab.local). Also adds metrics-server
 (`kubectl top`).
 
-1. **Mac:** prepare the workers (kernel modules, disk check):
+1. **Mac:** prepare the workers (kernel modules, disk check) and sync all clocks with the
+   lab NTP server (Ceph monitors need clocks within 50 ms):
    ```bash
-   cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K && cd ..
+   cd dns && ansible-playbook -i dns_inventory.ini add_ntp_server.yml -k -K && cd ..
+   cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K
+   ansible-playbook -i k8s_inventory.ini 09_configure_time_sync.yml -k -K && cd ..
    ```
 2. **GitHub:** merge the Phase 5 pull request in `platform-gitops`. Argo CD installs
    metrics-server, the Rook operator and the Ceph cluster (5–10 minutes).
@@ -286,6 +289,7 @@ data; **sizes cut down for the lab** (1 manager, 1 metadata server, OSD memory c
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
 
 0. **Mac:** prepare the workers for Ceph: `cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K`
+   (time sync with the lab NTP server is already part of playbook 01)
 1. **Mac:** copy the sealing key backup to the utility server:
    `scp ~/lab-secrets/sealed-secrets-key.yaml admin@172.16.79.10:`
 2. **Utility server:** `cd ~/platform-gitops && git pull`

@@ -110,6 +110,9 @@
     - name: Configure dynamic apps.lab.local zone for external-dns
       ansible.builtin.include_tasks: tasks/apps_zone.yml
 
+    - name: Make this server the lab's NTP server
+      ansible.builtin.include_tasks: tasks/ntp_server.yml
+
     - name: Create forward zone file
       ansible.builtin.copy:
         dest: "/var/named/{{ domain_name }}.db"
@@ -206,4 +209,9 @@
     - name: Restart BIND service
       ansible.builtin.systemd_service:
         name: named
+        state: restarted
+
+    - name: Restart chronyd
+      ansible.builtin.systemd_service:
+        name: chronyd
         state: restarted
