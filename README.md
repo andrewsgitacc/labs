@@ -49,6 +49,9 @@ The full IP plan is in [`platform/README.md`](platform/README.md) (section "IP p
 
 ## Requirements
 
+- Apple Silicon Mac with **64 GB RAM** (the platform's VMs use 44 GB) and **100 GB free disk**
+  to start, growing to ~300 GB by the last platform phase (thin-provisioned disks). Per-phase
+  details: [`platform/README.md` → MacBook requirements](platform/README.md#macbook-requirements)
 - VMware Fusion with the `CentOS9aarch64` template (user `admin` with sudo, password `admin` — *lab only*)
 - Ansible on the Mac, with the `community.general` and `ansible.posix` collections
 - The `dns` lab built first: every other lab depends on it
