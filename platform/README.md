@@ -89,7 +89,7 @@ use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total
 | 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | ✅ done |
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
 | 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
-| 4 | Sealed Secrets | next |
+| 4 | Sealed Secrets | 🚧 in progress |
 | 5 | Rook-Ceph (block, file, S3 object) | |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
 | 7 | Keycloak SSO | |
@@ -216,15 +216,49 @@ Design choices: **ApplicationSets** (a folder per component or app, no hand-kept
 **adopt, don't reinstall** the Phase 2 components; **automated sync with prune and self-heal**;
 **polling, not webhooks** (GitHub can't reach the lab).
 
+### Phase 4 — Sealed Secrets
+
+Secrets go into Git **encrypted**: only the cluster's Sealed Secrets controller can decrypt them.
+
+1. **Mac:** add `kubeseal` to the utility server (re-run the admin tools playbook):
+   ```bash
+   git pull && cd admin && ansible-playbook -i admin_inventory.ini install_admin_tools.yml -k -K && cd ..
+   ```
+2. **GitHub:** merge the Phase 4 pull request in `platform-gitops`. Argo CD installs the
+   controller within ~3 minutes (`sealed-secrets` Application Synced + Healthy).
+3. **Utility server:** back up the sealing key, then **Mac:** copy it somewhere safe, outside Git:
+   ```bash
+   cd ~/platform-gitops && git pull && ./scripts/backup-sealing-key.sh
+   ```
+   ```bash
+   mkdir -p ~/lab-secrets && chmod 700 ~/lab-secrets && scp admin@172.16.79.10:sealed-secrets-key.yaml ~/lab-secrets/
+   ```
+4. **Utility server:** seal the external-dns key: `./scripts/seal-external-dns-secret.sh`
+5. **Mac:** copy `tsig-sealedsecret.yaml` into `platform-gitops`, commit, PR, merge
+   (exact commands in the detailed runbook).
+6. **Test:** delete the Secret `external-dns/external-dns-rfc2136`; the controller recreates it
+   from Git and `hello.apps.lab.local` keeps resolving.
+
+Done when: the controller is running, the key is backed up on the Mac, the TSIG key is in Git
+as a SealedSecret, and a deleted Secret comes back by itself.
+Detailed runbook: [platform-gitops README → Phase 4](https://github.com/andrewsgitacc/platform-gitops#phase-4-runbook-sealed-secrets).
+
+Design choices: **Sealed Secrets** rather than an external vault for now: no extra service to
+run, and the encrypted secrets live in Git with everything else. **One sealing key, rotation off**
+(lab only), backed up outside Git — losing it means re-sealing every secret.
+
 ### Rebuilding the platform from scratch
 
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
 
-1. **Utility server:** `cd ~/platform-gitops && git pull`
-2. **Utility server:** `./scripts/create-external-dns-secret.sh`
-3. **Utility server:** `./scripts/install.sh` (all components in order, including Argo CD)
+1. **Mac:** copy the sealing key backup to the utility server:
+   `scp ~/lab-secrets/sealed-secrets-key.yaml admin@172.16.79.10:`
+2. **Utility server:** `cd ~/platform-gitops && git pull`
+3. **Utility server:** `./scripts/install.sh` — installs every component in order, restores the
+   sealing key before the Sealed Secrets controller starts, then Argo CD
 4. **Utility server:** `./scripts/export-lab-ca.sh`
-5. **Utility server:** Phase 3 steps 2–5 (password, `bootstrap/root.yaml`, Helm records)
+5. **Utility server:** Phase 3 steps 2–5 (password, `bootstrap/root.yaml`, Helm records — add
+   `kube-system/sealed-secrets-controller` to the Helm records list)
 
 ## Notes
 

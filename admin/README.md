@@ -17,10 +17,11 @@ Nothing is installed on the Mac. You SSH to the utility server to manage the clu
 | yq / jq | YAML / JSON processing | GitHub release / dnf |
 | git, gh | Git and GitHub CLI | dnf / cli.github.com repo |
 | argocd | Argo CD CLI (same version as the server) | GitHub release (checksum verified) |
+| kubeseal | Encrypts Secrets into SealedSecrets (same version as the controller) | GitHub release (checksum verified) |
 | dig, nsupdate | DNS testing (bind-utils) | dnf |
 
 Versions are pinned in [`vars/tool_versions.yml`](vars/tool_versions.yml). Later
-phases add tools here (kubeseal, kargo).
+phases add tools here (e.g. kargo).
 
 ## Why the DNS server is also the utility server
 
