@@ -72,6 +72,15 @@ ansible-playbook -i k8s_inventory.ini 05_install_calico.yml -k -K
 ansible-playbook -i k8s_inventory.ini 06_configure_firewall_for_cni.yml -k -K
 ```
 
+## Preparing the workers for Ceph
+
+Before the platform's Rook-Ceph phase (and after every cluster rebuild), load the kernel
+modules Ceph's drivers need and check the Ceph disks are empty:
+
+```bash
+ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K
+```
+
 ## Growing system disks on a running cluster
 
 Nodes built before the disk sizes above (or that need more space) can be grown **in place**,
