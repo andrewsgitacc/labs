@@ -88,8 +88,8 @@ use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total
 |---|---|---|
 | 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | ✅ done |
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
-| 3 | Argo CD (self-managed; GitOps from here) | 🚧 in progress |
-| 4 | Sealed Secrets | |
+| 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
+| 4 | Sealed Secrets | next |
 | 5 | Rook-Ceph (block, file, S3 object) | |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
 | 7 | Keycloak SSO | |
