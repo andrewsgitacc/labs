@@ -90,7 +90,7 @@ use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
 | 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
 | 4 | Sealed Secrets | ✅ done |
-| 5 | Rook-Ceph (block, file, S3 object) | next |
+| 5 | Rook-Ceph (block, file, S3 object) | 🚧 in progress |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
 | 7 | Keycloak SSO | |
 | 8 | Harbor | |
@@ -248,18 +248,57 @@ Design choices: **Sealed Secrets** rather than an external vault for now: no ext
 run, and the encrypted secrets live in Git with everything else. **One sealing key, rotation off**
 (lab only), backed up outside Git — losing it means re-sealing every secret.
 
+### Phase 5 — Rook-Ceph storage
+
+Ceph turns the empty 100 GB disk on each worker into replicated storage: **block**
+(`ceph-block`, the default StorageClass), **shared filesystem** (`ceph-filesystem`) and
+**S3 object storage** (`ceph-bucket`, https://s3.apps.lab.local). Also adds metrics-server
+(`kubectl top`).
+
+1. **Mac:** prepare the workers (kernel modules, disk check):
+   ```bash
+   cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K && cd ..
+   ```
+2. **GitHub:** merge the Phase 5 pull request in `platform-gitops`. Argo CD installs
+   metrics-server, the Rook operator and the Ceph cluster (5–10 minutes).
+3. **Utility server:** wait for the 3 OSD pods, then check Ceph:
+   ```bash
+   watch kubectl -n rook-ceph get pods
+   kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph status     # HEALTH_OK, 3 osds up
+   kubectl get storageclass                                            # ceph-block (default)
+   kubectl top nodes
+   ```
+4. **Utility server:** test a volume and an S3 bucket (commands in the detailed runbook).
+5. **Mac:** dashboard at https://ceph.apps.lab.local (user `admin`, password from the Secret
+   `rook-ceph/rook-ceph-dashboard-password`).
+
+Done when: HEALTH_OK with 3 OSDs, a PVC's data survives its pod, an S3 bucket works, the
+dashboard opens, and the workers still have memory headroom.
+Detailed runbook: [platform-gitops README → Phase 5](https://github.com/andrewsgitacc/platform-gitops#phase-5-runbook-rook-ceph-storage).
+
+Design choices: **Rook** (Ceph run by a Kubernetes operator, managed through Git like
+everything else); **3-way replication across the workers**, so losing one worker loses no
+data; **sizes cut down for the lab** (1 manager, 1 metadata server, OSD memory capped at
+~1.5 GB); Ceph's own **S3 gateway** instead of MinIO for object storage.
+
 ### Rebuilding the platform from scratch
 
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
 
+0. **Mac:** prepare the workers for Ceph: `cd k8s && ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K`
 1. **Mac:** copy the sealing key backup to the utility server:
    `scp ~/lab-secrets/sealed-secrets-key.yaml admin@172.16.79.10:`
 2. **Utility server:** `cd ~/platform-gitops && git pull`
 3. **Utility server:** `./scripts/install.sh` — installs every component in order, restores the
    sealing key before the Sealed Secrets controller starts, then Argo CD
 4. **Utility server:** `./scripts/export-lab-ca.sh`
-5. **Utility server:** Phase 3 steps 2–5 (password, `bootstrap/root.yaml`, Helm records — add
-   `kube-system/sealed-secrets-controller` to the Helm records list)
+5. **Utility server:** Phase 3 steps 2–4 (password, `bootstrap/root.yaml`), then remove the
+   Helm records for everything `install.sh` installed (Argo CD owns it all now):
+   ```bash
+   helm list -A -o json | jq -r '.[] | "\(.namespace) \(.name)"' | while read -r ns name; do
+     kubectl -n "$ns" delete secret -l owner=helm,name="$name"
+   done
+   ```
 
 ## Notes
 

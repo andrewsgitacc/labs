@@ -1,0 +1,57 @@
+---
+# Prepare the workers for Rook-Ceph (platform Phase 5).
+#
+# Ceph's CSI drivers need the rbd (block) and ceph (CephFS) kernel modules. Minimal
+# CentOS Stream installs don't always include the package that ships them, so install
+# it for the RUNNING kernel if they're missing, load them, and load them on every boot.
+# The Ceph disk itself (/dev/nvme0n2) is left untouched - Rook formats it.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 08_prepare_ceph_nodes.yml -k -K
+
+- name: Prepare workers for Ceph
+  hosts: workers
+  become: true
+
+  tasks:
+    - name: Check whether the rbd and ceph modules are available
+      ansible.builtin.command: modinfo {{ item }}
+      loop: [rbd, ceph]
+      register: modinfo
+      changed_when: false
+      failed_when: false
+
+    - name: Install kernel modules for the running kernel ({{ ansible_kernel }})
+      ansible.builtin.dnf:
+        name:
+          - "kernel-modules-{{ ansible_kernel }}"
+        state: present
+      when: modinfo.results | selectattr('rc', 'ne', 0) | list | length > 0
+
+    - name: Make sure lvm2 is installed (used by Ceph OSDs)
+      ansible.builtin.dnf:
+        name: lvm2
+        state: present
+
+    - name: Load rbd and ceph modules now
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: [rbd, ceph]
+
+    - name: Load rbd and ceph modules on boot
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/ceph.conf
+        mode: '0644'
+        content: |
+          rbd
+          ceph
+
+    - name: Check the Ceph disk is present and empty
+      ansible.builtin.command: lsblk -no FSTYPE,SIZE /dev/nvme0n2
+      register: ceph_disk
+      changed_when: false
+
+    - name: Show Ceph disk
+      ansible.builtin.debug:
+        msg: "/dev/nvme0n2: {{ ceph_disk.stdout | trim }}  (no filesystem type = empty, ready for Rook)"
