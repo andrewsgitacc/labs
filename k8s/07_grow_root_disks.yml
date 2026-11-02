@@ -83,6 +83,11 @@
         file: tasks/grow_root_fs.yml
         apply:
           become: true
+      vars:
+        # Ansible copies its modules to a temp dir on the node; use RAM so this still
+        # works when the node's disk is 100% full (the usual reason to run this).
+        # Node steps only: the Mac has no /dev/shm.
+        ansible_remote_tmp: /dev/shm/.ansible-tmp
 
     - name: Wait for node Ready
       ansible.builtin.command: >

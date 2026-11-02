@@ -375,3 +375,56 @@ kubectl delete pdb nginx-pdb && kubectl delete deployment nginx
 ### etcd quorum
 
 Need a min of 3 control nodes to maintain a quorum if a control node is lost. If quorum is lost, the API server goes read-only.
+
+## Troubleshooting
+
+### DiskPressure: pods Evicted, nodes tainted, gateway "no route to host"
+
+**Symptoms**
+
+- Pods show `Evicted` or `Pending`; new pods are "rejected: The node had condition: [DiskPressure]"
+- `kubectl describe nodes | grep -E '^Name:|DiskPressure'` shows `True` on some nodes, which are
+  tainted `node.kubernetes.io/disk-pressure:NoSchedule`
+- Services behind MetalLB (e.g. the gateway, 172.16.79.100) give **no route to host**: with no
+  healthy pods behind it, MetalLB stops announcing the IP
+
+**Cause:** the node's root filesystem is over ~85% full, usually container images.
+Check from the Mac:
+
+```bash
+for ip in 172.16.79.31 172.16.79.32 172.16.79.33; do
+  echo "== $ip"; ssh -q admin@$ip "df -h / | tail -1; lsblk -no NAME,SIZE /dev/nvme0n1 | head -4"
+done
+```
+
+**Fix: grow the system disk** (normal case, from the Mac):
+
+```bash
+ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K                          # all workers
+ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K --limit k8s-worker-03.lab.local   # one node
+```
+
+**Fix by hand** — when the disk is already bigger (`lsblk` shows `nvme0n1` at 40G) but the
+partition and `/` aren't, e.g. after an interrupted run. On the node:
+
+```bash
+sudo journalctl --vacuum-size=50M                     # free a little space if / is 100% full
+sudo crictl rmi --prune                               # remove unused container images
+sudo TMPDIR=/dev/shm growpart /dev/nvme0n1 3          # grow the partition (temp files in RAM)
+sudo pvresize --config 'backup { backup=0 archive=0 }' /dev/nvme0n1p3                       # LVM without
+sudo lvextend --config 'backup { backup=0 archive=0 }' -r -l +100%FREE /dev/cs/root          #  metadata backup
+sudo systemctl restart kubelet                        # re-check the disk now
+df -h /
+```
+
+`growpart` and LVM both need a little free space for temporary files; on a 100% full root
+filesystem they fail with "Couldn't create temporary archive name" unless run as above.
+
+**Afterwards, on the utility server:** clear the evicted pod records (there can be thousands
+after a long DiskPressure; `--wait=false` deletes them quickly):
+
+```bash
+kubectl describe nodes | grep -E '^Name:|DiskPressure'          # all False
+kubectl delete pods -A --field-selector=status.phase==Failed --wait=false
+kubectl get pods -A | grep -vE 'Running|Completed'             # nothing stuck
+```

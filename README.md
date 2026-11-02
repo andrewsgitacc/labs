@@ -26,8 +26,8 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 |---|---|---|---|
 | 1 | Prep | Cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), dynamic DNS zone, admin tools, new repos | ✅ Done |
 | 2 | Cluster foundation | MetalLB, Envoy Gateway (Gateway API), cert-manager with an internal CA, external-dns | ✅ Done |
-| 3 | Argo CD | GitOps: everything after this is deployed from Git | 🚧 In progress |
-| 4 | Sealed Secrets | Encrypted secrets stored safely in Git | Planned |
+| 3 | Argo CD | GitOps: everything after this is deployed from Git | ✅ Done |
+| 4 | Sealed Secrets | Encrypted secrets stored safely in Git | ⏭️ Next |
 | 5 | Rook-Ceph | Block, file and S3-compatible object storage | Planned |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | Planned |
 | 7 | Keycloak | Single sign-on for the platform UIs | Planned |
@@ -49,6 +49,9 @@ The full IP plan is in [`platform/README.md`](platform/README.md) (section "IP p
 
 ## Requirements
 
+- Apple Silicon Mac with **64 GB RAM** (the platform's VMs use 44 GB) and **100 GB free disk**
+  to start, growing to ~300 GB by the last platform phase (thin-provisioned disks). Per-phase
+  details: [`platform/README.md` → MacBook requirements](platform/README.md#macbook-requirements)
 - VMware Fusion with the `CentOS9aarch64` template (user `admin` with sudo, password `admin` — *lab only*)
 - Ansible on the Mac, with the `community.general` and `ansible.posix` collections
 - The `dns` lab built first: every other lab depends on it
