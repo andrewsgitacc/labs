@@ -266,7 +266,7 @@ Ceph turns the empty 100 GB disk on each worker into replicated storage: **block
    ansible-playbook -i k8s_inventory.ini 09_configure_time_sync.yml -k -K && cd ..
    ```
 2. **GitHub:** merge the Phase 5 pull request in `platform-gitops`. Argo CD installs
-   metrics-server, the Rook operator and the Ceph cluster (5–10 minutes).
+   metrics-server, the Rook operator, the Ceph CSI drivers and the Ceph cluster (5–10 minutes).
 3. **Utility server:** wait for the 3 OSD pods, then check Ceph:
    ```bash
    watch kubectl -n rook-ceph get pods
@@ -275,11 +275,24 @@ Ceph turns the empty 100 GB disk on each worker into replicated storage: **block
    kubectl top nodes
    ```
 4. **Utility server:** test a volume and an S3 bucket (commands in the detailed runbook).
-5. **Mac:** dashboard at https://ceph.apps.lab.local (user `admin`, password from the Secret
-   `rook-ceph/rook-ceph-dashboard-password`).
+5. **Utility server:** set the dashboard's `admin` password to `admin` (**lab only**; Rook
+   re-applies the Secret, so change both):
+   ```bash
+   P=admin
+   kubectl -n rook-ceph patch secret rook-ceph-dashboard-password -p "{\"stringData\":{\"password\":\"$P\"}}"
+   printf '%s' "$P" | kubectl -n rook-ceph exec -i deploy/rook-ceph-tools -- \
+     sh -c 'cat > /tmp/p && ceph dashboard ac-user-set-password admin -i /tmp/p --force-password; rm -f /tmp/p'
+   unset P
+   ```
+6. **Mac:** dashboard at https://ceph.apps.lab.local, log in as `admin` / `admin`.
 
 Done when: HEALTH_OK with 3 OSDs, a PVC's data survives its pod, an S3 bucket works, the
 dashboard opens, and the workers still have memory headroom.
+
+Lessons from the build: since Rook v1.21 the CSI drivers that create and mount volumes come
+from a **separate chart** (`ceph-csi-drivers`), without which every PVC stays `Pending`; Ceph
+monitors need the nodes' clocks within 50 ms (lab NTP server); Ceph v20 warns about the CSI
+keys' older cipher, which can't change until the nodes run kernel 7.0+ (warnings muted).
 Detailed runbook: [platform-gitops README → Phase 5](https://github.com/andrewsgitacc/platform-gitops#phase-5-runbook-rook-ceph-storage).
 
 Design choices: **Rook** (Ceph run by a Kubernetes operator, managed through Git like
