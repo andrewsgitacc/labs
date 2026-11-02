@@ -3,7 +3,8 @@
 # Works whether / is on LVM (CentOS default: cs-root) or a plain partition.
 # Safe to re-run: does nothing if there's no new space.
 # Copes with a completely full root filesystem (the usual reason to grow it):
-# frees a little space first and gives growpart scratch space in RAM (/dev/shm).
+# frees what it can, gives growpart scratch space in RAM (/dev/shm), and skips
+# LVM's metadata backup during the resize.
 
 - name: Free some space if the root filesystem is (nearly) full
   ansible.builtin.shell: |
@@ -48,9 +49,13 @@
       echo "growpart failed (rc=$GP_RC)" >&2; exit 1
     fi
     if lvs "$SRC" >/dev/null 2>&1; then
-      pvresize "$PV"
+      # LVM normally writes a metadata backup to /etc/lvm/{backup,archive} first,
+      # which fails on a full root filesystem - skip it for this resize only.
+      NOBACKUP='backup { backup=0 archive=0 }'
+      pvresize --config "$NOBACKUP" "$PV"
       FREE=$(vgs --noheadings --units b --nosuffix -o vg_free "$VG" | tr -d ' ')
-      if [ "$FREE" -gt 0 ]; then lvextend -r -l +100%FREE "$SRC"; fi
+      if [ "$FREE" -gt 0 ]; then lvextend --config "$NOBACKUP" -r -l +100%FREE "$SRC"; fi
+      vgcfgbackup "$VG" >/dev/null || true   # refresh the normal backup now there's room
     else
       xfs_growfs /
     fi
