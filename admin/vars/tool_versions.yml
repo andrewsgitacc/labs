@@ -14,3 +14,6 @@ yq_version: "v4.54.1"    # https://github.com/mikefarah/yq/releases
 
 # Keep in step with the Argo CD server (platform-gitops components/argocd/chart.yaml)
 argocd_version: "v3.5.4" # https://github.com/argoproj/argo-cd/releases
+
+# Keep in step with the Sealed Secrets controller (platform-gitops components/sealed-secrets/chart.yaml)
+kubeseal_version: "0.41.2" # https://github.com/bitnami-labs/sealed-secrets/releases (no "v" in file names)
