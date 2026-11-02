@@ -89,8 +89,8 @@ use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total
 | 1 | Prep: Mac DNS resolver, `apps.lab.local` zone, admin tools on the utility server, cluster rebuild (v1.36, Calico, bigger workers, Ceph disks), new repos | ✅ done |
 | 2 | Cluster foundation: MetalLB, Envoy Gateway, cert-manager, external-dns | ✅ done |
 | 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
-| 4 | Sealed Secrets | 🚧 in progress |
-| 5 | Rook-Ceph (block, file, S3 object) | |
+| 4 | Sealed Secrets | ✅ done |
+| 5 | Rook-Ceph (block, file, S3 object) | next |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | |
 | 7 | Keycloak SSO | |
 | 8 | Harbor | |
@@ -234,8 +234,9 @@ Secrets go into Git **encrypted**: only the cluster's Sealed Secrets controller 
    mkdir -p ~/lab-secrets && chmod 700 ~/lab-secrets && scp admin@172.16.79.10:sealed-secrets-key.yaml ~/lab-secrets/
    ```
 4. **Utility server:** seal the external-dns key: `./scripts/seal-external-dns-secret.sh`
-5. **Mac:** copy `tsig-sealedsecret.yaml` into `platform-gitops`, commit, PR, merge
-   (exact commands in the detailed runbook).
+5. **Mac:** copy the sealed file into `platform-gitops`, commit, PR, merge:
+   `scp admin@172.16.79.10:tsig-sealedsecret.yaml components/external-dns/manifests/`
+   (full commands in the detailed runbook).
 6. **Test:** delete the Secret `external-dns/external-dns-rfc2136`; the controller recreates it
    from Git and `hello.apps.lab.local` keeps resolving.
 
