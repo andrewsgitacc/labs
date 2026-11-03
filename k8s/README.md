@@ -91,6 +91,16 @@ dozen pods. New builds raise the limits in playbook 01; for an existing cluster:
 ansible-playbook -i k8s_inventory.ini 10_raise_inotify_limits.yml -k -K
 ```
 
+## PackageKit (background OS updates)
+
+The VM template includes PackageKit, which downloads OS updates in the background into
+`/var/cache/PackageKit` (GBs at a time) and fills the root disks. New builds disable it
+in playbook 01; for an existing cluster:
+
+```bash
+ansible-playbook -i k8s_inventory.ini 11_disable_packagekit.yml -k -K
+```
+
 ## Preparing the workers for Ceph
 
 Before the platform's Rook-Ceph phase (and after every cluster rebuild), load the kernel
@@ -418,6 +428,20 @@ for ip in 172.16.79.31 172.16.79.32 172.16.79.33; do ssh -q admin@$ip "hostname;
 The reference should be `172.16.79.10` and the offset well under 0.01 s. If not, run
 `dns/add_ntp_server.yml` and then `09_configure_time_sync.yml`. Ceph clears the warning
 within a few minutes.
+
+### Root disk filling up for no obvious reason
+
+`df -h /` drops by GBs per hour, or Prometheus fires `CephNodeDiskspaceWarning` (it predicts
+a node filesystem fills within 5 days). Find what's growing, on the node:
+
+```bash
+sudo du -xsh /var/lib/containerd /var/lib/kubelet /var/lib/rook /var/log /var/cache/* 2>/dev/null | sort -h | tail
+sudo find / -xdev -mmin -60 -size +50M -printf "%s %p\n" 2>/dev/null | sort -n | tail
+```
+
+Seen in this lab: `/var/cache/PackageKit` downloading OS updates. Fix with
+`11_disable_packagekit.yml`. Note that `CephNodeDiskspaceWarning` looks back 2 days, so
+after fixing a disk (or growing it) the alert can keep firing for up to 2 days.
 
 ### "failed to create fsnotify watcher: too many open files"
 

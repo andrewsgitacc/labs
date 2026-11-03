@@ -1,0 +1,21 @@
+---
+# Stop PackageKit from downloading OS updates in the background. The VM template ships
+# with it (desktop tooling); on a k8s node it quietly fills the root disk with update
+# packages in /var/cache/PackageKit (firefox, linux-firmware... GBs per hour), which led
+# to DiskPressure and CephNodeDiskspaceWarning. Nodes are updated deliberately instead.
+
+- name: Gather service facts
+  ansible.builtin.service_facts:
+
+- name: Stop and mask PackageKit
+  ansible.builtin.systemd_service:
+    name: packagekit.service
+    state: stopped
+    enabled: false
+    masked: true
+  when: "'packagekit.service' in ansible_facts.services"
+
+- name: Delete PackageKit's downloaded update cache
+  ansible.builtin.file:
+    path: /var/cache/PackageKit
+    state: absent
