@@ -1,0 +1,26 @@
+---
+# Raise the inotify limits on all k8s nodes so pods stop logging
+# "failed to create fsnotify watcher: too many open files" (seen in Loki for podinfo).
+# Takes effect immediately, no reboot. Fresh builds get this from 01_configure_k8s_cluster.yml.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 10_raise_inotify_limits.yml -k -K
+# Then restart the pods that failed to start their watchers, e.g.:
+#   kubectl -n hello rollout restart deployment
+
+- name: Raise inotify limits on all nodes
+  hosts: new_cluster_nodes
+  become: true
+
+  tasks:
+    - name: Apply inotify sysctls
+      ansible.builtin.include_tasks: tasks/inotify_limits.yml
+
+    - name: Read the live values
+      ansible.builtin.command: sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches
+      register: inotify_now
+      changed_when: false
+
+    - name: Print the live values
+      ansible.builtin.debug:
+        var: inotify_now.stdout_lines

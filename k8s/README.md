@@ -81,6 +81,16 @@ All nodes sync their clocks with the lab NTP server on `dns.lab.local` (set up b
 ansible-playbook -i k8s_inventory.ini 09_configure_time_sync.yml -k -K
 ```
 
+## inotify limits
+
+Pods that watch files (podinfo, Alloy, Prometheus' config reloader, Argo CD) each use
+inotify instances, and the OS default of 128 per user runs out once a node hosts a few
+dozen pods. New builds raise the limits in playbook 01; for an existing cluster:
+
+```bash
+ansible-playbook -i k8s_inventory.ini 10_raise_inotify_limits.yml -k -K
+```
+
 ## Preparing the workers for Ceph
 
 Before the platform's Rook-Ceph phase (and after every cluster rebuild), load the kernel
@@ -408,6 +418,19 @@ for ip in 172.16.79.31 172.16.79.32 172.16.79.33; do ssh -q admin@$ip "hostname;
 The reference should be `172.16.79.10` and the offset well under 0.01 s. If not, run
 `dns/add_ntp_server.yml` and then `09_configure_time_sync.yml`. Ceph clears the warning
 within a few minutes.
+
+### "failed to create fsnotify watcher: too many open files"
+
+A pod's logs (e.g. in Grafana → Explore → Loki) show this error, or a pod fails to start
+with it. The node has run out of inotify instances (`fs.inotify.max_user_instances`,
+default 128). Check from the utility server or Mac:
+
+```bash
+for ip in 172.16.79.21 172.16.79.22 172.16.79.23 172.16.79.31 172.16.79.32 172.16.79.33; do ssh -q admin@$ip "hostname; sysctl fs.inotify.max_user_instances fs.inotify.max_user_watches"; done
+```
+
+Fix: run `10_raise_inotify_limits.yml` (8192 instances, 524288 watches; no reboot), then
+restart the affected pods, e.g. `kubectl -n hello rollout restart deployment`.
 
 ### DiskPressure: pods Evicted, nodes tainted, gateway "no route to host"
 
