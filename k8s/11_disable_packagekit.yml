@@ -1,0 +1,23 @@
+---
+# Stop PackageKit's background OS-update downloads on all k8s nodes and free the space
+# they used (/var/cache/PackageKit). Fresh builds get this from 01_configure_k8s_cluster.yml.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 11_disable_packagekit.yml -k -K
+
+- name: Disable PackageKit on all nodes
+  hosts: new_cluster_nodes
+  become: true
+
+  tasks:
+    - name: Disable PackageKit and clear its cache
+      ansible.builtin.include_tasks: tasks/disable_packagekit.yml
+
+    - name: Read root filesystem usage
+      ansible.builtin.command: df -h /
+      register: root_df
+      changed_when: false
+
+    - name: Print root filesystem usage
+      ansible.builtin.debug:
+        var: root_df.stdout_lines
