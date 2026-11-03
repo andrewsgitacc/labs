@@ -150,6 +150,9 @@
         - { name: 'net.bridge.bridge-nf-call-ip6tables', value: '1' }
         - { name: 'net.ipv4.ip_forward', value: '1' }
 
+    - name: Raise inotify limits for container workloads
+      ansible.builtin.include_tasks: tasks/inotify_limits.yml
+
     - name: Grow root filesystem to the enlarged system disk
       ansible.builtin.include_tasks: tasks/grow_root_fs.yml
 
