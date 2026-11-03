@@ -11,7 +11,10 @@ if lvs "$SRC" >/dev/null 2>&1; then
 else
   PV="$SRC"
 fi
-DISK=/dev/$(lsblk -no pkname "$PV")
+# -d: just this partition - without it lsblk also lists the LVM volumes inside it
+# (cs-root, cs-swap), returning several names instead of the parent disk.
+DISK=/dev/$(lsblk -ndo pkname "$PV")
+[ -b "$DISK" ] || { echo "Could not find the disk holding $PV (got: $DISK)" >&2; exit 1; }
 PARTNUM=$(cat /sys/class/block/"$(basename "$PV")"/partition)
 BEFORE=$(df -BG --output=size / | tail -1 | tr -d ' G')
 # growpart exits 1 with NOCHANGE when the partition already fills the disk;
