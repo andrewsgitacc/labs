@@ -19,6 +19,8 @@ Nothing is installed on the Mac. You SSH to the utility server to manage the clu
 | argocd | Argo CD CLI (same version as the server) | GitHub release (checksum verified) |
 | kubeseal | Encrypts Secrets into SealedSecrets (same version as the controller) | GitHub release (checksum verified) |
 | dig, nsupdate | DNS testing (bind-utils) | dnf |
+| podman, skopeo | Push, pull and inspect container images (Harbor, Phase 8) | dnf |
+| htpasswd | Password hashes for `seal-harbor-secrets.sh` (httpd-tools) | dnf |
 
 Versions are pinned in [`vars/tool_versions.yml`](vars/tool_versions.yml). Later
 phases add tools here (e.g. kargo).

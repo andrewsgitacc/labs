@@ -48,6 +48,9 @@
           - bind-utils        # dig, nsupdate
           - bash-completion
           - tar
+          - podman            # push/pull container images (Harbor, Phase 8)
+          - skopeo            # inspect and copy images between registries
+          - httpd-tools       # htpasswd (scripts/seal-harbor-secrets.sh)
         state: present
         disable_excludes: kubernetes
         update_cache: true

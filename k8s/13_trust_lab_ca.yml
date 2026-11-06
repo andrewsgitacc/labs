@@ -1,0 +1,59 @@
+---
+# Trust the lab root CA on every k8s node, so containerd can pull images from
+# https://harbor.apps.lab.local (Phase 8) - its certificate comes from the lab CA.
+#
+# The CA is created by cert-manager inside the cluster and is NEW after every rebuild,
+# so this reads it from the cluster: run it again after rebuilding the platform.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 13_trust_lab_ca.yml -k -K
+
+- name: Trust the lab root CA on the nodes
+  hosts: new_cluster_nodes
+  become: true
+  gather_facts: false
+  serial: 1                       # restart containerd one node at a time
+  vars:
+    kubectl_host: "{{ groups['control_plane'][0] }}"
+
+  tasks:
+    - name: Read the lab root CA certificate from the cluster
+      ansible.builtin.command: kubectl -n cert-manager get secret lab-root-ca -o jsonpath='{.data.ca\.crt}'
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      run_once: true
+      register: lab_ca
+      changed_when: false
+      failed_when: lab_ca.rc != 0 or lab_ca.stdout == ""
+
+    - name: Install it as a trusted CA
+      ansible.builtin.copy:
+        content: "{{ lab_ca.stdout | b64decode }}"
+        dest: /etc/pki/ca-trust/source/anchors/lab-root-ca.crt
+        owner: root
+        group: root
+        mode: "0644"
+      register: ca_file
+
+    - name: Update the system trust store
+      ansible.builtin.command: update-ca-trust extract
+      when: ca_file.changed
+
+    # containerd reads the trust store when it starts. Restarting it doesn't stop
+    # running containers.
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted
+      when: ca_file.changed
+
+    - name: Check the node trusts harbor.apps.lab.local
+      ansible.builtin.command: curl -sS -o /dev/null -w '%{http_code}' https://harbor.apps.lab.local/api/v2.0/ping
+      register: ping
+      changed_when: false
+      failed_when: false
+
+    - name: Result
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ 'TLS OK, HTTP ' ~ ping.stdout if ping.rc == 0 else 'FAILED: ' ~ ping.stderr }}"
