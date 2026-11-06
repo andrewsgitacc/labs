@@ -72,7 +72,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 5 | Rook-Ceph | 3 monitors, manager, 3 OSDs, S3 gateway, file service, metrics-server | **~9 GB** *measured* (~3 GB per worker, 30%) | ~70 GB | 150 GB |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
 | 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | **~16 GB** *measured* (~5.4 GB per worker, 57%; Keycloak + DB ~0.7 GB) | ~105 GB | 200 GB |
-| 8 | Harbor | core, registry, jobservice, portal, Trivy, Valkey, its PostgreSQL | ~19 GB | ~140 GB (images in Ceph) | 250 GB |
+| 8 | Harbor | core, registry, jobservice, portal, Trivy, Valkey, its PostgreSQL | **~18 GB** *measured* (5.6–6.5 GB per worker, 60–69%; Harbor ~0.3 GB at rest) | ~140 GB (images in Ceph) | 250 GB |
 | 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~20–23 GB | ~160 GB | 250 GB |
 | 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
 | 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
@@ -81,7 +81,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 > workers sat at ~30% (Ceph's sizes are cut down for the lab); after Phase 6 they're at ~59%
 > (Prometheus alone is ~1.4 GB), and after Phase 7 still ~57% (Keycloak and its database
 > add ~0.7 GB). The later phases will bring them towards the 30 GB, so check after Phase 8
-> (Harbor) and add worker RAM before Phase 9 if they pass ~75%. **Watch the control planes too**: the API
+> (Harbor) and add worker RAM before Phase 9 if they pass ~75%. After Phase 8 the busiest
+> worker is at 69%, so 10 GB is still enough for Phase 9; re-check after it. **Watch the control planes too**: the API
 > servers grow with every CRD the platform adds, and in Phase 7 the 4 GB control planes ran
 > out of memory (API timeouts, a node NotReady); they have 6 GB since then.
 > If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers with
@@ -101,8 +102,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
-| 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | 🚧 in progress |
-| 9 | CI: ARC runners, sample-app pipeline, Renovate | |
+| 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
+| 9 | CI: ARC runners, sample-app pipeline, Renovate | ⏭️ next |
 | 10 | Kargo | |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
 
@@ -473,6 +474,14 @@ layers are stored in a **Ceph S3 bucket**.
 10. **Utility server:** `kubectl top nodes` — workers still have headroom.
 
 Done when: Keycloak login works, an image is pushed, scanned and pulled by a pod.
+
+Lessons from the build: Harbor publishes **arm64 images only from v2.16** (so the lab runs
+its release candidate); OpenSSL 3 writes keys in a format (PKCS#8) Harbor's token service
+can't read, so `podman login` failed with a 500 until the seal script made a PKCS#1 key;
+**merge only when the pull request shows the sealed-secrets commit** (one was pushed after
+the merge, and Harbor started without its secrets); copy the sealed files with **one** `scp`
+(pasted lines after the first are taken as passwords); with Keycloak login, `podman login`
+uses the **CLI secret** from Harbor's User Profile; the login button is "LOGIN WITH Keycloak".
 Detailed runbook: [platform-gitops README → Phase 8](https://github.com/andrewsgitacc/platform-gitops#phase-8-runbook-harbor).
 
 Design choices: **Harbor** (the CNCF-graduated standard for self-hosted registries, with
