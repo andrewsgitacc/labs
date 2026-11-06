@@ -71,16 +71,17 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 4 | Sealed Secrets | controller | ~6 GB | ~55 GB | 100 GB |
 | 5 | Rook-Ceph | 3 monitors, manager, 3 OSDs, S3 gateway, file service, metrics-server | **~9 GB** *measured* (~3 GB per worker, 30%) | ~70 GB | 150 GB |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
-| 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | ~19 GB | ~105 GB | 200 GB |
-| 8 | Harbor | registry, database, Redis, Trivy scanner | ~22 GB | ~140 GB (images in Ceph) | 250 GB |
-| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~23–26 GB | ~160 GB | 250 GB |
-| 10 | Kargo | controller, API | ~24–27 GB | ~160 GB | 250 GB |
-| 11 | Hardening | Kyverno, Velero | ~25–28 GB | ~180 GB (backups) | 300 GB |
+| 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | **~16 GB** *measured* (~5.4 GB per worker, 57%; Keycloak + DB ~0.7 GB) | ~105 GB | 200 GB |
+| 8 | Harbor | registry, database, Redis, Trivy scanner | ~19 GB | ~140 GB (images in Ceph) | 250 GB |
+| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~20–23 GB | ~160 GB | 250 GB |
+| 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
+| 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
 
 > **Watch the workers' memory** with `kubectl top nodes` after each phase. After Phase 5 the
 > workers sat at ~30% (Ceph's sizes are cut down for the lab); after Phase 6 they're at ~59%
-> (Prometheus alone is ~1.4 GB). The later phases will bring them close to the 30 GB, so
-> plan more worker RAM before Phase 8 (Harbor). **Watch the control planes too**: the API
+> (Prometheus alone is ~1.4 GB), and after Phase 7 still ~57% (Keycloak and its database
+> add ~0.7 GB). The later phases will bring them towards the 30 GB, so check after Phase 8
+> (Harbor) and add worker RAM before Phase 9 if they pass ~75%. **Watch the control planes too**: the API
 > servers grow with every CRD the platform adds, and in Phase 7 the 4 GB control planes ran
 > out of memory (API timeouts, a node NotReady); they have 6 GB since then.
 > If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers with
