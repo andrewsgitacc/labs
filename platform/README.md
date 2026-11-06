@@ -73,7 +73,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
 | 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | **~16 GB** *measured* (~5.4 GB per worker, 57%; Keycloak + DB ~0.7 GB) | ~105 GB | 200 GB |
 | 8 | Harbor | core, registry, jobservice, portal, Trivy, Valkey, its PostgreSQL | **~18 GB** *measured* (5.6–6.5 GB per worker, 60–69%; Harbor ~0.3 GB at rest) | ~140 GB (images in Ceph) | 250 GB |
-| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~20–23 GB | ~160 GB | 250 GB |
+| 9 | CI | ARC controller + listener, Renovate (hourly job); runner pods on demand (~0.5–2.5 GB each while building, max 2) | ~20–23 GB | ~160 GB | 250 GB |
 | 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
 | 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
 
@@ -103,7 +103,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
 | 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
-| 9 | CI: ARC runners, sample-app pipeline, Renovate | ⏭️ next |
+| 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | 🚧 in progress |
 | 10 | Kargo | |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
 
@@ -491,6 +491,63 @@ chart's own database; image layers in **Ceph S3** rather than a volume, so the r
 holds no data; **all of Harbor's secrets sealed in Git**, because the chart would otherwise
 generate new random ones on every Argo CD sync; the nodes **trust the lab CA** in the OS
 (`13_trust_lab_ca.yml`) instead of marking Harbor as an insecure registry.
+
+### Phase 9 — CI
+
+GitHub Actions jobs for **sample-app** run **inside the cluster**: the **Actions Runner
+Controller (ARC)** starts a runner pod for each job and deletes it afterwards. Each runner pod
+has a **rootless BuildKit** sidecar (the engine behind `docker build`, no privileges or Docker
+needed) that builds the image and pushes it to **Harbor**, where Trivy scans it. **Renovate**
+runs every hour and opens pull requests when new versions of what we pin (charts, images,
+GitHub Actions) are released — including Harbor's move from rc1 to v2.16.0.
+
+1. **GitHub:** create two fine-grained personal access tokens (who gets which permissions:
+   platform-gitops runbook, Phase 9 step 1): `lab-arc` for sample-app and `lab-renovate` for
+   platform-gitops + sample-app.
+2. **Mac:** push the `phase-9-ci` branch in `platform-gitops`, open the PR, **don't merge yet**.
+3. **Utility server:** seal the two tokens (the script checks they work first):
+   ```bash
+   cd ~/platform-gitops && git fetch && git checkout phase-9-ci && git pull
+   ./scripts/seal-ci-secrets.sh
+   git checkout main
+   ```
+4. **Mac:** add both sealed files to the branch (one `scp`) and push:
+   ```bash
+   cd ~/GitHub/platform-gitops && git checkout phase-9-ci
+   scp -r admin@172.16.79.10:ci-sealed /tmp/
+   cp /tmp/ci-sealed/github-token-sealedsecret.yaml components/arc-sample-app/manifests/
+   cp /tmp/ci-sealed/renovate-token-sealedsecret.yaml components/renovate/manifests/
+   rm -rf /tmp/ci-sealed
+   git add components/*/manifests/*-sealedsecret.yaml
+   git commit -m "Phase 9: sealed CI tokens" && git push
+   ```
+5. **GitHub:** once the PR shows that commit and CI is green, merge. Then the utility server:
+   `kubectl -n argocd get applications` — `arc-controller`, `arc-sample-app`, `renovate`
+   Synced + Healthy; sample-app → Settings → Actions → Runners lists `arc-sample-app`.
+6. **Utility server:** create the Harbor project `sample-app` and a CI robot account
+   (platform-gitops runbook, Phase 9 step 4); **GitHub:** save the robot's name and secret as
+   sample-app's Actions secrets `HARBOR_USERNAME` / `HARBOR_PASSWORD`.
+7. **Mac:** push sample-app: its workflow runs on `arc-sample-app`, builds and pushes
+   `harbor.apps.lab.local/sample-app/sample-app:<sha>`. **Mac (Harbor):** the image is there,
+   scanned.
+8. **Utility server:** run Renovate once now and look for its PRs:
+   ```bash
+   kubectl -n renovate create job renovate-now --from=cronjob/renovate
+   kubectl -n renovate logs -f job/renovate-now | grep -E 'Repository|PR|ERROR' | head -40
+   ```
+9. **Utility server:** `kubectl top nodes` while a build runs — workers still have headroom.
+
+Done when: a push to sample-app builds in the cluster and lands in Harbor scanned, and
+Renovate has opened its Dependency Dashboard and update PRs.
+Detailed runbook: [platform-gitops README → Phase 9](https://github.com/andrewsgitacc/platform-gitops#phase-9-runbook-ci).
+
+Design choices: **ARC** (GitHub's own Kubernetes runners) with **ephemeral** runner pods, so
+every job starts clean and nothing runs while idle; **rootless BuildKit** as a sidecar for
+image builds instead of Docker-in-Docker (no privileged pods) or the archived Kaniko;
+**personal access tokens** for ARC and Renovate (simpler than a GitHub App, but they expire
+and are tied to your account — re-seal before expiry); a **robot account** limited to one
+Harbor project for pushes; **self-hosted Renovate** deployed by Argo CD like everything else,
+acting only on repos that opt in with a `renovate.json`.
 
 ### Rebuilding the platform from scratch
 

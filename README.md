@@ -32,7 +32,7 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ Done |
 | 7 | Keycloak | Single sign-on for the platform UIs | ✅ Done |
 | 8 | Harbor | Container registry with Trivy image scanning | ✅ Done |
-| 9 | CI | GitHub Actions self-hosted runners in the cluster, sample-app pipeline, Renovate | ⏭️ Next |
+| 9 | CI | GitHub Actions self-hosted runners in the cluster, sample-app pipeline, Renovate | 🚧 In progress |
 | 10 | Kargo | Promotion of releases dev → staging → prod | Planned |
 | 11 | Hardening and day-2 | Kyverno policies, Velero backups + restore test, alerting, Kubernetes upgrade, break/fix | Planned |
 
