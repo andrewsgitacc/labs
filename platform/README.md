@@ -72,7 +72,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 5 | Rook-Ceph | 3 monitors, manager, 3 OSDs, S3 gateway, file service, metrics-server | **~9 GB** *measured* (~3 GB per worker, 30%) | ~70 GB | 150 GB |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
 | 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | **~16 GB** *measured* (~5.4 GB per worker, 57%; Keycloak + DB ~0.7 GB) | ~105 GB | 200 GB |
-| 8 | Harbor | registry, database, Redis, Trivy scanner | ~19 GB | ~140 GB (images in Ceph) | 250 GB |
+| 8 | Harbor | core, registry, jobservice, portal, Trivy, Valkey, its PostgreSQL | ~19 GB | ~140 GB (images in Ceph) | 250 GB |
 | 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~20–23 GB | ~160 GB | 250 GB |
 | 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
 | 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
@@ -101,7 +101,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
-| 8 | Harbor | ⏭️ next |
+| 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | 🚧 in progress |
 | 9 | CI: ARC runners, sample-app pipeline, Renovate | |
 | 10 | Kargo | |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
@@ -416,6 +416,73 @@ stays the source of truth; Argo CD talks **OIDC to Keycloak directly** (no Dex);
 built-in `admin` logins stay as a way in when Keycloak is down; the lab CA is **shared by
 trust-manager** because it's regenerated on every rebuild and can't be stored in Git.
 
+### Phase 8 — Harbor
+
+**Harbor** (https://harbor.apps.lab.local) is the platform's container registry: images
+pushed there are scanned for vulnerabilities by **Trivy**, and the cluster pulls from it.
+Login is through Keycloak. Its database is PostgreSQL from CloudNativePG and the image
+layers are stored in a **Ceph S3 bucket**.
+
+> Harbor only has **arm64** images from **v2.16.0**, and so far only its release candidate
+> (v2.16.0-rc1) exists, so that's what the lab runs, with the 1.19.4 chart. Move to v2.16.0
+> when it's released.
+
+1. **Mac:** add podman, skopeo and htpasswd to the utility server:
+   ```bash
+   cd admin && ansible-playbook -i admin_inventory.ini install_admin_tools.yml -k -K && cd ..
+   ```
+2. **Mac:** push the `phase-8-harbor` branch in `platform-gitops` and open the pull
+   request, but **don't merge yet**.
+3. **Utility server:** create and seal Harbor's secrets (asks for a password for Harbor's
+   local `admin`):
+   ```bash
+   cd ~/platform-gitops && git fetch && git checkout phase-8-harbor && git pull
+   ./scripts/seal-harbor-secrets.sh
+   git checkout main
+   ```
+4. **Mac:** copy the three sealed files into the branch, commit, push:
+   ```bash
+   cd ~/GitHub/platform-gitops && git checkout phase-8-harbor
+   scp admin@172.16.79.10:harbor-sealed/harbor-secrets-sealedsecret.yaml components/harbor/manifests/
+   scp admin@172.16.79.10:harbor-sealed/harbor-token-sealedsecret.yaml components/harbor/manifests/
+   scp admin@172.16.79.10:harbor-sealed/harbor-client-sealedsecret.yaml components/keycloak/manifests/
+   git add components/*/manifests/*-sealedsecret.yaml
+   git commit -m "Phase 8: sealed Harbor secrets" && git push
+   ```
+5. **GitHub:** CI green, merge. Argo CD installs Harbor (5–10 minutes):
+   ```bash
+   watch kubectl -n argocd get applications          # harbor: Synced + Healthy
+   curl -s https://harbor.apps.lab.local/api/v2.0/ping; echo   # Pong
+   ```
+6. **Mac:** the nodes trust the lab CA, so they can pull from Harbor:
+   ```bash
+   cd k8s && ansible-playbook -i k8s_inventory.ini 13_trust_lab_ca.yml -k -K && cd ..
+   ```
+7. **Mac:** https://harbor.apps.lab.local → **LOGIN VIA OIDC PROVIDER** → Keycloak `admin`:
+   you're in as Harbor admin `admin@lab.local`. Copy your **CLI secret** (User Profile).
+8. **Utility server:** push an image, then pull it into the cluster:
+   ```bash
+   podman login harbor.apps.lab.local -u admin@lab.local      # password: the CLI secret
+   podman pull docker.io/library/busybox:1.37
+   podman tag docker.io/library/busybox:1.37 harbor.apps.lab.local/library/busybox:1.37
+   podman push harbor.apps.lab.local/library/busybox:1.37
+   kubectl run harbor-pull-test --image=harbor.apps.lab.local/library/busybox:1.37 \
+     --restart=Never --rm -i -- sh -c 'echo pulled from Harbor'
+   ```
+9. **Mac (Harbor):** Projects → library → busybox → **SCAN**: Trivy lists vulnerabilities.
+10. **Utility server:** `kubectl top nodes` — workers still have headroom.
+
+Done when: Keycloak login works, an image is pushed, scanned and pulled by a pod.
+Detailed runbook: [platform-gitops README → Phase 8](https://github.com/andrewsgitacc/platform-gitops#phase-8-runbook-harbor).
+
+Design choices: **Harbor** (the CNCF-graduated standard for self-hosted registries, with
+scanning, projects, robot accounts and replication) over the lighter Zot, accepting a
+release candidate for arm64; **PostgreSQL from CloudNativePG** like Keycloak instead of the
+chart's own database; image layers in **Ceph S3** rather than a volume, so the registry pod
+holds no data; **all of Harbor's secrets sealed in Git**, because the chart would otherwise
+generate new random ones on every Argo CD sync; the nodes **trust the lab CA** in the OS
+(`13_trust_lab_ca.yml`) instead of marking Harbor as an insecure registry.
+
 ### Rebuilding the platform from scratch
 
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
@@ -433,8 +500,10 @@ On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
 5. **Utility server:** once cert-manager is up, `./scripts/export-lab-ca.sh`; set the Ceph
    dashboard password (Phase 5 step 5); once Keycloak is up, restart `argocd-server` and
    Grafana so they load the lab CA (Phase 7 step 5). The Keycloak secrets are already in Git
-   (sealed with the restored key), so SSO comes back by itself
-6. **Utility server:** remove the Helm records `install.sh` left behind (Argo CD owns it all):
+   (sealed with the restored key), so SSO comes back by itself; so are Harbor's
+6. **Mac:** once cert-manager is up, trust the new lab CA on the nodes (pulls from Harbor):
+   `cd k8s && ansible-playbook -i k8s_inventory.ini 13_trust_lab_ca.yml -k -K`
+7. **Utility server:** remove the Helm records `install.sh` left behind (Argo CD owns it all):
    ```bash
    helm list -A -o json | jq -r '.[] | "\(.namespace) \(.name)"' | while read -r ns name; do
      kubectl -n "$ns" delete secret -l owner=helm,name="$name"
