@@ -54,7 +54,7 @@
           delegate_to: localhost
           changed_when: true
 
-    - name: Set memory to {{ ram_mb }} MB
+    - name: Set VM memory (MB) to {{ ram_mb }}
       ansible.builtin.lineinfile:
         path: "{{ vmx }}"
         regexp: '^memsize\s*='
