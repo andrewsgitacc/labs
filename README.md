@@ -29,8 +29,8 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 | 3 | Argo CD | GitOps: everything after this is deployed from Git | ✅ Done |
 | 4 | Sealed Secrets | Encrypted secrets stored safely in Git | ✅ Done |
 | 5 | Rook-Ceph | Block, file and S3-compatible object storage | ✅ Done |
-| 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | 🚧 In progress |
-| 7 | Keycloak | Single sign-on for the platform UIs | Planned |
+| 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ Done |
+| 7 | Keycloak | Single sign-on for the platform UIs | ⏭️ Next |
 | 8 | Harbor | Container registry with Trivy image scanning | Planned |
 | 9 | CI | GitHub Actions self-hosted runners in the cluster, sample-app pipeline, Renovate | Planned |
 | 10 | Kargo | Promotion of releases dev → staging → prod | Planned |

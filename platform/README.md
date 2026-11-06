@@ -70,16 +70,18 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 3 | Argo CD | Argo CD (server, repo server, controller, ApplicationSets, Redis) | ~6 GB | ~55 GB | 100 GB |
 | 4 | Sealed Secrets | controller | ~6 GB | ~55 GB | 100 GB |
 | 5 | Rook-Ceph | 3 monitors, manager, 3 OSDs, S3 gateway, file service, metrics-server | **~9 GB** *measured* (~3 GB per worker, 30%) | ~70 GB | 150 GB |
-| 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | ~14 GB | ~100 GB (metrics/logs in Ceph) | 200 GB |
-| 7 | Keycloak | Keycloak + database | ~16 GB | ~105 GB | 200 GB |
-| 8 | Harbor | registry, database, Redis, Trivy scanner | ~19 GB | ~140 GB (images in Ceph) | 250 GB |
-| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~20–23 GB | ~160 GB | 250 GB |
-| 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
-| 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
+| 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
+| 7 | Keycloak | Keycloak + database | ~19 GB | ~105 GB | 200 GB |
+| 8 | Harbor | registry, database, Redis, Trivy scanner | ~22 GB | ~140 GB (images in Ceph) | 250 GB |
+| 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~23–26 GB | ~160 GB | 250 GB |
+| 10 | Kargo | controller, API | ~24–27 GB | ~160 GB | 250 GB |
+| 11 | Hardening | Kyverno, Velero | ~25–28 GB | ~180 GB (backups) | 300 GB |
 
 > **Watch the workers' memory** with `kubectl top nodes` after each phase. After Phase 5 the
-> workers sit at ~30% (Ceph's sizes are cut down for the lab), so the 30 GB should last; the
-> control planes run at ~70% of their 4 GB, which is normal and steady.
+> workers sat at ~30% (Ceph's sizes are cut down for the lab); after Phase 6 they're at ~59%
+> (Prometheus alone is ~1.4 GB). The later phases will bring them close to the 30 GB, so
+> plan to raise the workers to 12 GB before Phase 8 (Harbor). The control planes run at
+> 66–85% of their 4 GB (Alloy and node-exporter run there too); watch them as well.
 > If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers to
 > 12 GB (`ram` in `k8s/provision_k8s_nodes.yml`, or the VM settings in Fusion, one node at a
 > time): +6 GB on the Mac, 50 GB of VMs in total. Disk space inside the VMs is checked with
@@ -94,8 +96,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 3 | Argo CD (self-managed; GitOps from here) | ✅ done |
 | 4 | Sealed Secrets | ✅ done |
 | 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
-| 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | 🚧 in progress |
-| 7 | Keycloak SSO | |
+| 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
+| 7 | Keycloak SSO | ⏭️ next |
 | 8 | Harbor | |
 | 9 | CI: ARC runners, sample-app pipeline, Renovate | |
 | 10 | Kargo | |
@@ -317,10 +319,29 @@ cert-manager expose their metrics too.
 3. **Mac:** https://alertmanager.apps.lab.local: only **Watchdog** firing.
 4. **Mac:** https://grafana.apps.lab.local, **admin / admin** (lab only). Check the
    Kubernetes dashboards and the **Platform** folder (Ceph, Argo CD).
-5. **Mac (Grafana):** Explore → Loki → `{namespace="hello"}` shows the hello app's logs.
-6. **Utility server:** `kubectl top nodes` — workers still have headroom.
+5. **Mac (Grafana):** Explore → Loki → `{namespace="argocd"}` shows Argo CD's logs. (The
+   hello app only logs when it starts or stops, so it's often empty for the last hour.)
+6. **Utility server:** the same checks from the command line, through the API server (the
+   Prometheus and Loki images have no `wget`/`curl` to `kubectl exec` with):
+   ```bash
+   P=/api/v1/namespaces/monitoring/services
+   kubectl get --raw "$P/kube-prometheus-stack-prometheus:9090/proxy/api/v1/targets?state=active" \
+     | jq -r '.data.activeTargets[] | select(.health!="up") | .labels.job'      # blank = all up
+   kubectl get --raw "$P/kube-prometheus-stack-prometheus:9090/proxy/api/v1/alerts" \
+     | jq -r '.data.alerts[] | select(.state=="firing") | .labels.alertname'   # Watchdog
+   kubectl get --raw "$P/loki:3100/proxy/loki/api/v1/labels" | jq -r '.data[]'  # namespace, pod...
+   kubectl top nodes                                                           # workers ~60%
+   ```
 
 Done when: all targets up, only Watchdog firing, dashboards show data, logs searchable.
+
+Lessons from the build: the old grafana.com Ceph dashboards use pre-v20 metric names (mostly
+"N/A"), so the lab loads **Ceph's own dashboards** for the Ceph version it runs; a password
+changed at Grafana's first-login prompt is kept on its volume and **overrides the chart's**
+`adminPassword` (click **Skip**; reset with `grafana cli` if needed), and Grafana's login
+lockout is turned off (lab only); the Prometheus/Loki images have no shell tools, so
+command-line checks go through `kubectl get --raw .../proxy/`; Phase 6 roughly doubled worker
+memory use (~9 GB → ~17 GB).
 Detailed runbook: [platform-gitops README → Phase 6](https://github.com/andrewsgitacc/platform-gitops#phase-6-runbook-observability).
 
 Design choices: **kube-prometheus-stack** (the standard bundle: operator, Prometheus,
