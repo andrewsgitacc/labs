@@ -7,7 +7,7 @@ This cluster is the base for the platform lab (see `labs/platform`).
 
 | Node | IP | vCPU / RAM | System disk | Extra disk |
 |---|---|---|---|---|
-| k8s-control-01..03 | 172.16.79.21–23 | 2 / 4 GB | 20 GB | — |
+| k8s-control-01..03 | 172.16.79.21–23 | 2 / 6 GB | 20 GB | — |
 | k8s-worker-01..03 | 172.16.79.31–33 | 4 / 10 GB | 40 GB | 100 GB thin `/dev/nvme0n2` (Ceph OSD, left empty) |
 
 The template's system disk (~13 GB) is enlarged during provisioning and the root
@@ -39,7 +39,7 @@ VMware Fusion uses NAT networking — you can't change vSwitch security policies
   - Password: `admin` *(lab only)*
 - Ansible (on Mac)
 - DNS server deployed — see `labs/dns`
-- About 44 GB of free RAM on the Mac (stop the Puppet/Jenkins lab VMs first) and ~300 GB free disk for the thin Ceph disks as they fill
+- About 50 GB of free RAM on the Mac (stop the Puppet/Jenkins lab VMs first) and ~300 GB free disk for the thin Ceph disks as they fill
 
 ## Deployment
 
@@ -125,6 +125,23 @@ ansible-playbook -i k8s_inventory.ini 07_grow_root_disks.yml -k -K -e target=con
 
 Symptom that you need it: nodes show `DiskPressure`, are tainted
 `node.kubernetes.io/disk-pressure`, and pods are `Evicted`.
+
+## Changing node memory on a running cluster
+
+New builds take their RAM from `provision_k8s_nodes.yml`. To change a running node,
+`12_resize_vm_memory.yml` does it **in place, one node at a time**: drain → power off → set
+`memsize` in the `.vmx` → power on → wait until Ready (control planes: until their API server
+answers; workers: until Ceph is HEALTH_OK again) → uncordon.
+
+```bash
+# Control planes to 6 GB (done in Phase 7)
+ansible-playbook -i k8s_inventory.ini 12_resize_vm_memory.yml -k -K -e target=control_plane -e ram_mb=6144
+# Workers to 12 GB
+ansible-playbook -i k8s_inventory.ini 12_resize_vm_memory.yml -k -K -e ram_mb=12288
+```
+
+Symptom that you need it: `kubectl` gets "TLS handshake timeout", nodes go `NotReady`, or
+`kubectl top nodes` shows a node above ~90% (see Troubleshooting).
 
 ## Adding nodes later (join tokens)
 
@@ -415,6 +432,25 @@ kubectl delete pdb nginx-pdb && kubectl delete deployment nginx
 Need a min of 3 control nodes to maintain a quorum if a control node is lost. If quorum is lost, the API server goes read-only.
 
 ## Troubleshooting
+
+### Control plane out of memory ("TLS handshake timeout")
+
+`kubectl` fails with `Unable to connect to the server: net/http: TLS handshake timeout` or
+`couldn't get current server API group list`, sometimes only every other try (the API name
+`k8s-api.lab.local` is round-robin DNS over the control planes, so one bad node fails some
+requests). A control plane can go `NotReady`, and Argo CD syncs stall half-done. Check each
+API server and the nodes' memory:
+
+```bash
+for n in 21 22 23; do printf "172.16.79.$n: "; curl -sk -m 5 https://172.16.79.$n:6443/livez || echo "no answer"; echo; done
+for n in 01 02 03; do ssh admin@k8s-control-$n.lab.local 'hostname -s; free -m | sed -n 2p; uptime'; done
+```
+
+Out of memory looks like only a few MB "available" and a load average far above the 2 vCPUs.
+The API server keeps every CRD in memory, so it grows with the platform: in Phase 7
+CloudNativePG's large CRDs pushed the 4 GB control planes over the edge. **Fix:** give them
+more RAM with `12_resize_vm_memory.yml` (6 GB since Phase 7). Afterwards, check Argo CD for
+syncs that failed while the API was down (see the platform-gitops README → Troubleshooting).
 
 ### Clock skew (Ceph `MON_CLOCK_SKEW`)
 

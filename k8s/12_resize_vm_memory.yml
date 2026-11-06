@@ -1,0 +1,124 @@
+---
+# Change the RAM of existing k8s nodes IN PLACE, one node at a time.
+#
+# New builds get their RAM from provision_k8s_nodes.yml; this changes a running cluster.
+# For each node: drain -> power off -> set memsize in the .vmx -> power on ->
+# wait until Ready (control planes: until their API server answers) -> uncordon.
+# One at a time keeps etcd at 2 of 3 members and Ceph at 2 of 3 copies.
+#
+# Usage (from the Mac, in k8s/):
+#   ansible-playbook -i k8s_inventory.ini 12_resize_vm_memory.yml -k -K \
+#     -e target=control_plane -e ram_mb=6144                                   # control planes to 6 GB
+#   ansible-playbook -i k8s_inventory.ini 12_resize_vm_memory.yml -k -K \
+#     -e ram_mb=12288                                                          # workers to 12 GB
+# Workers: check `ceph health` is HEALTH_OK first; the playbook waits for Ceph between nodes.
+
+- name: Resize VM memory in place
+  hosts: "{{ target | default('workers') }}"
+  serial: 1
+  gather_facts: false
+  # No sudo by default: the vmrun / .vmx steps run on the Mac as you.
+  become: false
+  vars:
+    ram_mb: "{{ undef(hint='Set the new RAM in MB, e.g. -e ram_mb=6144') }}"
+    vm_name: "{{ inventory_hostname.split('.')[0] }}"
+    vmx: "/Users/andrew/Virtual Machines.localized/{{ vm_name }}.vmwarevm/{{ vm_name }}.vmx"
+    vmrun: "/Applications/VMware Fusion.app/Contents/Public/vmrun"
+    # Run kubectl on a control plane that isn't the node being resized.
+    kubectl_host: "{{ groups['control_plane'] | reject('equalto', inventory_hostname) | first }}"
+    is_control_plane: "{{ inventory_hostname in groups['control_plane'] }}"
+
+  tasks:
+    - name: Drain node
+      ansible.builtin.command: >
+        kubectl drain {{ inventory_hostname }} --ignore-daemonsets
+        --delete-emptydir-data --force --timeout=180s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      changed_when: true
+
+    - name: Power off VM
+      block:
+        - name: Shut down cleanly
+          ansible.builtin.command: '"{{ vmrun }}" stop "{{ vmx }}" soft'
+          delegate_to: localhost
+          changed_when: true
+          async: 180
+          poll: 5
+      rescue:
+        # A node that is out of memory may not respond to a clean shutdown.
+        - name: Power off hard
+          ansible.builtin.command: '"{{ vmrun }}" stop "{{ vmx }}" hard'
+          delegate_to: localhost
+          changed_when: true
+
+    - name: Set memory to {{ ram_mb }} MB
+      ansible.builtin.lineinfile:
+        path: "{{ vmx }}"
+        regexp: '^memsize\s*='
+        line: 'memsize = "{{ ram_mb }}"'
+      delegate_to: localhost
+
+    - name: Power on VM
+      ansible.builtin.command: '"{{ vmrun }}" start "{{ vmx }}" gui'
+      delegate_to: localhost
+      changed_when: true
+
+    - name: Wait for SSH
+      ansible.builtin.wait_for_connection:
+        delay: 15
+        timeout: 300
+
+    - name: Wait for the node's API server (control planes)
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:6443/livez"
+        validate_certs: false
+        return_content: true
+      delegate_to: localhost
+      register: livez
+      until: livez.status == 200 and livez.content == 'ok'
+      retries: 40
+      delay: 10
+      when: is_control_plane | bool
+
+    - name: Wait for node Ready
+      ansible.builtin.command: >
+        kubectl wait --for=condition=Ready node/{{ inventory_hostname }} --timeout=300s
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      changed_when: false
+
+    - name: Uncordon node
+      ansible.builtin.command: kubectl uncordon {{ inventory_hostname }}
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      changed_when: true
+
+    - name: Show memory
+      ansible.builtin.command: free -m
+      register: free
+      changed_when: false
+
+    - name: Memory now
+      ansible.builtin.debug:
+        msg: "{{ free.stdout_lines[:2] }}"
+
+    # Workers carry the Ceph OSDs: let Ceph recover before stopping the next one.
+    - name: Wait for Ceph to be healthy again (workers)
+      ansible.builtin.command: kubectl -n rook-ceph exec deploy/rook-ceph-tools -- ceph health
+      environment:
+        KUBECONFIG: /etc/kubernetes/admin.conf
+      delegate_to: "{{ kubectl_host }}"
+      become: true
+      register: ceph
+      until: ceph.rc == 0 and 'HEALTH_OK' in ceph.stdout
+      retries: 60
+      delay: 10
+      changed_when: false
+      when: not (is_control_plane | bool)

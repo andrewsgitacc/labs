@@ -30,8 +30,8 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 | 4 | Sealed Secrets | Encrypted secrets stored safely in Git | ✅ Done |
 | 5 | Rook-Ceph | Block, file and S3-compatible object storage | ✅ Done |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ Done |
-| 7 | Keycloak | Single sign-on for the platform UIs | 🚧 In progress |
-| 8 | Harbor | Container registry with Trivy image scanning | Planned |
+| 7 | Keycloak | Single sign-on for the platform UIs | ✅ Done |
+| 8 | Harbor | Container registry with Trivy image scanning | ⏭️ Next |
 | 9 | CI | GitHub Actions self-hosted runners in the cluster, sample-app pipeline, Renovate | Planned |
 | 10 | Kargo | Promotion of releases dev → staging → prod | Planned |
 | 11 | Hardening and day-2 | Kyverno policies, Velero backups + restore test, alerting, Kubernetes upgrade, break/fix | Planned |
@@ -49,7 +49,7 @@ The full IP plan is in [`platform/README.md`](platform/README.md) (section "IP p
 
 ## Requirements
 
-- Apple Silicon Mac with **64 GB RAM** (the platform's VMs use 44 GB) and **100 GB free disk**
+- Apple Silicon Mac with **64 GB RAM** (the platform's VMs use 50 GB) and **100 GB free disk**
   to start, growing to ~300 GB by the last platform phase (thin-provisioned disks). Per-phase
   details: [`platform/README.md` → MacBook requirements](platform/README.md#macbook-requirements)
 - VMware Fusion with the `CentOS9aarch64` template (user `admin` with sudo, password `admin` — *lab only*)
