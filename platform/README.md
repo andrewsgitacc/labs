@@ -353,7 +353,7 @@ controller-manager, kube-proxy) aren't scraped yet because they only listen on 1
 ### Phase 7 — Keycloak single sign-on
 
 **Keycloak** (https://keycloak.apps.lab.local) becomes the login for **Argo CD** and
-**Grafana**: log in once as `andrew`, and membership of the Keycloak group
+**Grafana**: log in once as `admin`, and membership of the Keycloak group
 `platform-admins` makes you admin in both. Keycloak's database is **PostgreSQL** run by the
 **CloudNativePG** operator, and **trust-manager** shares the lab CA with pods so Argo CD and
 Grafana can talk to Keycloak over HTTPS. The Keycloak setup (realm, clients, group, user)
@@ -361,8 +361,8 @@ is code in Git, applied by **keycloak-config-cli** after every change.
 
 1. **Mac:** push the `phase-7-keycloak` branch in `platform-gitops` and open the pull
    request, but **don't merge yet**.
-2. **Utility server:** create and seal the secrets (asks for a password for your Keycloak
-   user `andrew`):
+2. **Utility server:** create and seal the secrets (asks for a password for the Keycloak
+   user `admin`):
    ```bash
    cd ~/platform-gitops && git fetch && git checkout phase-7-keycloak
    ./scripts/seal-keycloak-secrets.sh
@@ -388,9 +388,9 @@ is code in Git, applied by **keycloak-config-cli** after every change.
    kubectl -n monitoring rollout restart deployment kube-prometheus-stack-grafana
    ```
 6. **Mac:** https://keycloak.apps.lab.local/admin, **admin / admin** (lab only): realm
-   **platform** has the clients `argocd` and `grafana`, group `platform-admins`, user `andrew`.
-7. **Mac:** https://argocd.apps.lab.local → **LOG IN VIA KEYCLOAK** → `andrew`: full access.
-8. **Mac:** https://grafana.apps.lab.local → **Sign in with Keycloak** → `andrew`: Admin role.
+   **platform** has the clients `argocd` and `grafana`, group `platform-admins`, user `admin`.
+7. **Mac:** https://argocd.apps.lab.local → **LOG IN VIA KEYCLOAK** → `admin`: full access.
+8. **Mac:** https://grafana.apps.lab.local → **Sign in with Keycloak** → `admin`: Admin role.
 9. **Utility server:** `kubectl top nodes` — workers still have headroom.
 
 Done when: both UIs log in through Keycloak with admin rights, and the workers have headroom.
