@@ -14,9 +14,9 @@
     #   workers need room for container images or the kubelet evicts pods (DiskPressure).
     # ceph_disk: true adds a second, empty, thin-provisioned disk used as a Ceph OSD.
     k8s_nodes:
-      - { name: "k8s-control-01", cpus: "2", ram: "4096",  root_disk: "20GB" }
-      - { name: "k8s-control-02", cpus: "2", ram: "4096",  root_disk: "20GB" }
-      - { name: "k8s-control-03", cpus: "2", ram: "4096",  root_disk: "20GB" }
+      - { name: "k8s-control-01", cpus: "2", ram: "6144",  root_disk: "20GB" }
+      - { name: "k8s-control-02", cpus: "2", ram: "6144",  root_disk: "20GB" }
+      - { name: "k8s-control-03", cpus: "2", ram: "6144",  root_disk: "20GB" }
       - { name: "k8s-worker-01",  cpus: "4", ram: "10240", root_disk: "40GB", ceph_disk: true }
       - { name: "k8s-worker-02",  cpus: "4", ram: "10240", root_disk: "40GB", ceph_disk: true }
       - { name: "k8s-worker-03",  cpus: "4", ram: "10240", root_disk: "40GB", ceph_disk: true }

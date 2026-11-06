@@ -51,11 +51,11 @@ until the workers fill up (see the note under the table).
 | VM | Count | vCPU / RAM each | System disk | Extra disk | RAM total |
 |---|---|---|---|---|---|
 | dns (DNS + utility server) | 1 | 2 / 2 GB | ~13 GB | — | 2 GB |
-| k8s control planes | 3 | 2 / 4 GB | 20 GB | — | 12 GB |
+| k8s control planes | 3 | 2 / 6 GB | 20 GB | — | 18 GB |
 | k8s workers | 3 | 4 / 10 GB | 40 GB | 100 GB (Ceph) | 30 GB |
-| **Total** | | **20 vCPU** | | | **44 GB** |
+| **Total** | | **20 vCPU** | | | **50 GB** |
 
-Leave **~15 GB** for macOS and your apps, and **power off the Jenkins and Puppet VMs**
+Leave **~14 GB** for macOS and your apps, and **power off the Jenkins and Puppet VMs**
 (another ~12 GB) while the platform is running. All disks are **thin provisioned**: they only
 use Mac disk space as they fill, up to the sizes above (~500 GB maximum in total).
 
@@ -80,11 +80,13 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 > **Watch the workers' memory** with `kubectl top nodes` after each phase. After Phase 5 the
 > workers sat at ~30% (Ceph's sizes are cut down for the lab); after Phase 6 they're at ~59%
 > (Prometheus alone is ~1.4 GB). The later phases will bring them close to the 30 GB, so
-> plan to raise the workers to 12 GB before Phase 8 (Harbor). The control planes run at
-> 66–85% of their 4 GB (Alloy and node-exporter run there too); watch them as well.
-> If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers to
-> 12 GB (`ram` in `k8s/provision_k8s_nodes.yml`, or the VM settings in Fusion, one node at a
-> time): +6 GB on the Mac, 50 GB of VMs in total. Disk space inside the VMs is checked with
+> plan more worker RAM before Phase 8 (Harbor). **Watch the control planes too**: the API
+> servers grow with every CRD the platform adds, and in Phase 7 the 4 GB control planes ran
+> out of memory (API timeouts, a node NotReady); they have 6 GB since then.
+> If pods go `Pending` with "Insufficient memory" or are `OOMKilled`, raise the workers with
+> `k8s/12_resize_vm_memory.yml` (one node at a time; also set `ram` in
+> `k8s/provision_k8s_nodes.yml` for rebuilds). 12 GB workers would make 56 GB of VMs, leaving
+> only ~8 GB for macOS, so 11 GB (53 GB in total) is the safer step on a 64 GB Mac. Disk space inside the VMs is checked with
 > `df -h /` on each node; Kubernetes evicts pods at ~85% full (see `k8s/README.md` → DiskPressure).
 
 ## Build order
@@ -97,8 +99,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 4 | Sealed Secrets | ✅ done |
 | 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
-| 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | 🚧 in progress |
-| 8 | Harbor | |
+| 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
+| 8 | Harbor | ⏭️ next |
 | 9 | CI: ARC runners, sample-app pipeline, Renovate | |
 | 10 | Kargo | |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
@@ -395,6 +397,15 @@ is code in Git, applied by **keycloak-config-cli** after every change.
 
 Done when: both UIs log in through Keycloak with admin rights, and the workers have headroom.
 Detailed runbook: [platform-gitops README → Phase 7](https://github.com/andrewsgitacc/platform-gitops#phase-7-runbook-keycloak-single-sign-on).
+
+Lessons from the build: the **control planes ran out of memory** when CloudNativePG's large
+CRDs arrived (`kubectl` "TLS handshake timeout", a node NotReady): the API servers hold every
+CRD in memory, so the control planes now have **6 GB** (`k8s/12_resize_vm_memory.yml`);
+during that outage Argo CD's first attempt to create the Keycloak database failed and its
+sync then **waited forever** for Keycloak, which was waiting for the database (fixed by
+applying `database.yaml` by hand; see platform-gitops Troubleshooting); Argo CD and Grafana
+read the lab CA **once at start-up**, so they need a restart after `lab-ca-bundle` first
+appears; keycloak-config-cli built for Keycloak 26.5 works fine with 26.8.
 
 Design choices: **Keycloak** (the standard open-source identity provider; Harbor and Kargo
 will use it too) from codecentric's **keycloakx** chart with the official image (Bitnami's
