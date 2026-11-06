@@ -71,7 +71,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 4 | Sealed Secrets | controller | ~6 GB | ~55 GB | 100 GB |
 | 5 | Rook-Ceph | 3 monitors, manager, 3 OSDs, S3 gateway, file service, metrics-server | **~9 GB** *measured* (~3 GB per worker, 30%) | ~70 GB | 150 GB |
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
-| 7 | Keycloak | Keycloak + database | ~19 GB | ~105 GB | 200 GB |
+| 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | ~19 GB | ~105 GB | 200 GB |
 | 8 | Harbor | registry, database, Redis, Trivy scanner | ~22 GB | ~140 GB (images in Ceph) | 250 GB |
 | 9 | CI | runner controller; build runners on demand (~2 GB each while building) | ~23–26 GB | ~160 GB | 250 GB |
 | 10 | Kargo | controller, API | ~24–27 GB | ~160 GB | 250 GB |
@@ -97,7 +97,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 4 | Sealed Secrets | ✅ done |
 | 5 | Rook-Ceph (block, file, S3 object) | ✅ done |
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
-| 7 | Keycloak SSO | ⏭️ next |
+| 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | 🚧 in progress |
 | 8 | Harbor | |
 | 9 | CI: ARC runners, sample-app pipeline, Renovate | |
 | 10 | Kargo | |
@@ -350,6 +350,60 @@ logs, queried in the same Grafana; Loki in **monolithic mode** with its data in 
 metrics and logs kept **7 days**; the kubeadm control-plane components (etcd, scheduler,
 controller-manager, kube-proxy) aren't scraped yet because they only listen on 127.0.0.1.
 
+### Phase 7 — Keycloak single sign-on
+
+**Keycloak** (https://keycloak.apps.lab.local) becomes the login for **Argo CD** and
+**Grafana**: log in once as `andrew`, and membership of the Keycloak group
+`platform-admins` makes you admin in both. Keycloak's database is **PostgreSQL** run by the
+**CloudNativePG** operator, and **trust-manager** shares the lab CA with pods so Argo CD and
+Grafana can talk to Keycloak over HTTPS. The Keycloak setup (realm, clients, group, user)
+is code in Git, applied by **keycloak-config-cli** after every change.
+
+1. **Mac:** push the `phase-7-keycloak` branch in `platform-gitops` and open the pull
+   request, but **don't merge yet**.
+2. **Utility server:** create and seal the secrets (asks for a password for your Keycloak
+   user `andrew`):
+   ```bash
+   cd ~/platform-gitops && git fetch && git checkout phase-7-keycloak
+   ./scripts/seal-keycloak-secrets.sh
+   git checkout main
+   ```
+3. **Mac:** copy the three sealed files into the branch, commit, push:
+   ```bash
+   cd ~/GitHub/platform-gitops && git checkout phase-7-keycloak
+   scp admin@172.16.79.10:keycloak-sealed/realm-secrets-sealedsecret.yaml components/keycloak/manifests/
+   scp admin@172.16.79.10:keycloak-sealed/argocd-oidc-sealedsecret.yaml components/argocd/manifests/
+   scp admin@172.16.79.10:keycloak-sealed/grafana-oidc-sealedsecret.yaml components/kube-prometheus-stack/manifests/
+   git add components/*/manifests/*-sealedsecret.yaml
+   git commit -m "Phase 7: sealed Keycloak SSO secrets" && git push
+   ```
+4. **GitHub:** CI green, merge. Argo CD installs everything (5–10 minutes):
+   ```bash
+   watch kubectl -n argocd get applications          # trust-manager, cloudnative-pg, keycloak: Synced + Healthy
+   kubectl -n keycloak get cluster,pods              # keycloak-db healthy, keycloak-0 1/1
+   ```
+5. **Utility server:** restart the two apps that call Keycloak, so they load the lab CA:
+   ```bash
+   kubectl -n argocd rollout restart deployment argocd-server
+   kubectl -n monitoring rollout restart deployment kube-prometheus-stack-grafana
+   ```
+6. **Mac:** https://keycloak.apps.lab.local/admin, **admin / admin** (lab only): realm
+   **platform** has the clients `argocd` and `grafana`, group `platform-admins`, user `andrew`.
+7. **Mac:** https://argocd.apps.lab.local → **LOG IN VIA KEYCLOAK** → `andrew`: full access.
+8. **Mac:** https://grafana.apps.lab.local → **Sign in with Keycloak** → `andrew`: Admin role.
+9. **Utility server:** `kubectl top nodes` — workers still have headroom.
+
+Done when: both UIs log in through Keycloak with admin rights, and the workers have headroom.
+Detailed runbook: [platform-gitops README → Phase 7](https://github.com/andrewsgitacc/platform-gitops#phase-7-runbook-keycloak-single-sign-on).
+
+Design choices: **Keycloak** (the standard open-source identity provider; Harbor and Kargo
+will use it too) from codecentric's **keycloakx** chart with the official image (Bitnami's
+free images were withdrawn in 2025); **CloudNativePG** for PostgreSQL, reused by Harbor in
+Phase 8; realm **as code with keycloak-config-cli** rather than a one-time import, so Git
+stays the source of truth; Argo CD talks **OIDC to Keycloak directly** (no Dex); the
+built-in `admin` logins stay as a way in when Keycloak is down; the lab CA is **shared by
+trust-manager** because it's regenerated on every rebuild and can't be stored in Git.
+
 ### Rebuilding the platform from scratch
 
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
@@ -365,7 +419,9 @@ On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
    `kubectl apply -f bootstrap/root.yaml` — Argo CD installs everything else from Git,
    retrying until storage, CRDs and webhooks are ready (allow ~15–20 minutes)
 5. **Utility server:** once cert-manager is up, `./scripts/export-lab-ca.sh`; set the Ceph
-   dashboard password (Phase 5 step 5)
+   dashboard password (Phase 5 step 5); once Keycloak is up, restart `argocd-server` and
+   Grafana so they load the lab CA (Phase 7 step 5). The Keycloak secrets are already in Git
+   (sealed with the restored key), so SSO comes back by itself
 6. **Utility server:** remove the Helm records `install.sh` left behind (Argo CD owns it all):
    ```bash
    helm list -A -o json | jq -r '.[] | "\(.namespace) \(.name)"' | while read -r ns name; do
