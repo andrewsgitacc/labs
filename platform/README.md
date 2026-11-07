@@ -73,7 +73,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 6 | Observability | Prometheus, Grafana, Alertmanager, Loki, Alloy | **~17 GB** *measured* (~5.6 GB per worker, 59%) | ~100 GB (metrics/logs in Ceph) | 200 GB |
 | 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | **~16 GB** *measured* (~5.4 GB per worker, 57%; Keycloak + DB ~0.7 GB) | ~105 GB | 200 GB |
 | 8 | Harbor | core, registry, jobservice, portal, Trivy, Valkey, its PostgreSQL | **~18 GB** *measured* (5.6–6.5 GB per worker, 60–69%; Harbor ~0.3 GB at rest) | ~140 GB (images in Ceph) | 250 GB |
-| 9 | CI | ARC controller + listener, Renovate (hourly job); runner pods on demand (~0.5–2.5 GB each while building, max 2) | ~20–23 GB | ~160 GB | 250 GB |
+| 9 | CI | ARC controller + listener, Renovate (hourly job); runner pods on demand (~0.5–2.5 GB each while building, max 2) | **~18.4 GB** *measured* idle (59–70% per worker); +up to ~2.5 GB per running build | ~160 GB | 250 GB |
 | 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
 | 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
 
@@ -103,8 +103,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 6 | Observability: Prometheus, Grafana, Alertmanager, Loki, Alloy | ✅ done |
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
 | 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
-| 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | 🚧 in progress |
-| 10 | Kargo | |
+| 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | ✅ done |
+| 10 | Kargo | ⏭️ next |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
 
 ## How to build each phase
@@ -539,6 +539,14 @@ GitHub Actions) are released — including Harbor's move from rc1 to v2.16.0.
 
 Done when: a push to sample-app builds in the cluster and lands in Harbor scanned, and
 Renovate has opened its Dependency Dashboard and update PRs.
+
+Lessons from the build: the Renovate token needs **Pull requests: Read and write**, or
+Renovate pushes branches but opens no PRs; the first sample-app image had **47** fixable
+vulnerabilities (Go 1.24's standard library), and merging Renovate's golang 1.27 PR brought
+the rebuilt image down to **4** negligible ones — the whole loop working: Trivy finds it,
+Renovate proposes the fix, CI builds it in the cluster, Harbor rescans; Renovate's chart
+PRs (cert-manager, MetalLB) rolled out through Argo CD within minutes of merging; paste
+Mac and utility-server commands into the right terminal (prompt `andrew:` vs `[admin@dns`).
 Detailed runbook: [platform-gitops README → Phase 9](https://github.com/andrewsgitacc/platform-gitops#phase-9-runbook-ci).
 
 Design choices: **ARC** (GitHub's own Kubernetes runners) with **ephemeral** runner pods, so
