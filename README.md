@@ -33,7 +33,7 @@ Full plan, architecture and runbooks: [`platform/README.md`](platform/README.md)
 | 7 | Keycloak | Single sign-on for the platform UIs | ✅ Done |
 | 8 | Harbor | Container registry with Trivy image scanning | ✅ Done |
 | 9 | CI | GitHub Actions self-hosted runners in the cluster, sample-app pipeline, Renovate | ✅ Done |
-| 10 | Kargo | Promotion of releases dev → staging → prod | ⏭️ Next |
+| 10 | Kargo | Promotion of releases dev → staging → prod (sample-app), then Puppet code environments | 🚧 In progress |
 | 11 | Hardening and day-2 | Kyverno policies, Velero backups + restore test, alerting, Kubernetes upgrade, break/fix | Planned |
 
 Related repos (created in Phase 1, used from Phase 3):

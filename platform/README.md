@@ -104,7 +104,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
 | 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
 | 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | ✅ done |
-| 10 | Kargo | ⏭️ next |
+| 10 | Kargo: sample-app dev → staging → prod (10a), Puppet code environments (10b) | 🚧 in progress |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
 
 ## How to build each phase
@@ -557,6 +557,63 @@ and are tied to your account — re-seal before expiry); a **robot account** lim
 Harbor project for pushes; **self-hosted Renovate** deployed by Argo CD like everything else,
 acting only on repos that opt in with a `renovate.json`.
 
+### Phase 10 — Kargo
+
+**Kargo** (https://kargo.apps.lab.local) promotes releases through stages. Every
+sample-app image that CI pushes to Harbor becomes **Freight**; Kargo deploys it to **dev**
+by itself, and a **Promote** click sends it on to **staging**, then **prod** — only Freight
+that ran healthily in the stage before. What each stage runs lives in the
+`sample-app-deploy` repo: Kargo renders the stage with the new image tag and commits it to
+the branch `stage/<stage>`, which that stage's Argo CD Application deploys.
+Phase 10b will promote Puppet code (the control repo's environment branches) the same way.
+
+1. **GitHub:** create a fine-grained token `lab-kargo` — repositories `sample-app-deploy` and
+   `puppet-control-repo`, **Contents: Read and write** (field by field: platform-gitops
+   runbook, Phase 10 step 1).
+2. **Mac:** in `sample-app-deploy`, push the `phase-10-kargo` branch, open the PR, merge once
+   its `validate` check is green.
+3. **Mac:** push the `phase-10-kargo` branch in `platform-gitops`, open the PR, **don't merge yet**.
+4. **Utility server:** seal Kargo's secrets — asks for a new Kargo `admin` password, the
+   token (checked first) and Harbor's `admin` password (creates a pull-only robot account):
+   ```bash
+   cd ~/platform-gitops && git fetch && git checkout phase-10-kargo && git pull
+   ./scripts/seal-kargo-secrets.sh
+   git checkout main
+   ```
+5. **Mac:** copy the sealed files to the branch (one `scp`, then a separate block):
+   ```bash
+   cd ~/GitHub/platform-gitops && git checkout phase-10-kargo
+   scp -r admin@172.16.79.10:kargo-sealed /tmp/
+   ```
+   ```bash
+   cp /tmp/kargo-sealed/kargo-api-sealedsecret.yaml components/kargo/manifests/
+   cp /tmp/kargo-sealed/git-*.yaml /tmp/kargo-sealed/harbor-*.yaml kargo/sample-app/
+   rm -rf /tmp/kargo-sealed
+   git add components/kargo/manifests kargo/sample-app
+   git commit -m "Phase 10: sealed Kargo secrets" && git push
+   ```
+6. **GitHub:** once the PR shows that commit and CI is green, merge. **Utility server:**
+   `kubectl -n argocd get applications kargo kargo-sample-app keycloak` — Synced + Healthy;
+   `kubectl -n sample-app get freight,promotions` — Freight found, dev promotion Succeeded.
+7. **Mac:** `curl -k https://sample-app-dev.apps.lab.local` answers with `"environment":"dev"`.
+8. **Mac:** https://kargo.apps.lab.local → SSO login (Keycloak user `admin`) → project
+   sample-app → promote the Freight to staging, then prod; `curl -k` both URLs.
+9. **Mac:** merge a small sample-app change: CI builds it, Kargo puts it in dev on its own.
+10. **Utility server:** `kubectl top nodes` — workers still have headroom.
+
+Done when: new sample-app images reach dev automatically, and staging/prod by a promotion
+in the Kargo UI, with each stage's history in its `stage/*` branch.
+Detailed runbook: [platform-gitops README → Phase 10](https://github.com/andrewsgitacc/platform-gitops#phase-10-runbook-kargo).
+
+Design choices: **rendered branches** (Kargo commits the fully rendered manifests per stage
+to `stage/<stage>`) rather than Kargo editing `main`, so `main` only changes through
+reviewed PRs and a stage's branch is exactly what it runs; stage Applications **without
+automated sync**, so Kargo decides when a stage changes; auto-promotion **only into dev**;
+images picked by **newest build** among the CI's short-SHA tags (no semver releases yet);
+the Kargo pipeline itself declared in Git (`platform-gitops/kargo/`), not clicked together in
+the UI; one **pull-only** Harbor robot account for Kargo and the stages' image pulls; no
+Argo Rollouts, so no automated verification yet (Phase 11 candidate).
+
 ### Rebuilding the platform from scratch
 
 On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
@@ -574,7 +631,10 @@ On a freshly built cluster (Phase 1 step 5), the whole platform comes back with:
 5. **Utility server:** once cert-manager is up, `./scripts/export-lab-ca.sh`; set the Ceph
    dashboard password (Phase 5 step 5); once Keycloak is up, restart `argocd-server` and
    Grafana so they load the lab CA (Phase 7 step 5). The Keycloak secrets are already in Git
-   (sealed with the restored key), so SSO comes back by itself; so are Harbor's
+   (sealed with the restored key), so SSO comes back by itself; so are Harbor's.
+   Harbor's robot accounts are in its database, so after a rebuild re-create them: CI's
+   (Phase 9 step 6) and Kargo's (`./scripts/seal-kargo-secrets.sh --pipeline-only`, then
+   commit the new sealed files).
 6. **Mac:** once cert-manager is up, trust the new lab CA on the nodes (pulls from Harbor):
    `cd k8s && ansible-playbook -i k8s_inventory.ini 13_trust_lab_ca.yml -k -K`
 7. **Utility server:** remove the Helm records `install.sh` left behind (Argo CD owns it all):
