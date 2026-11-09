@@ -104,8 +104,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
 | 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
 | 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | ✅ done |
-| 10 | Kargo: sample-app dev → staging → prod (10a ✅ done), Puppet code environments (10b 🚧 in progress) | 🚧 in progress |
-| 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
+| 10 | Kargo: sample-app dev → staging → prod (10a), Puppet code environments (10b) | ✅ done |
+| 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | ⏭️ next |
 
 ## How to build each phase
 
@@ -678,6 +678,25 @@ Nothing new runs in the cluster; the three Puppet VMs need **+8 GB** on the Mac 
 Done when: a change merged to the control repo's `main` reaches `development` by itself and
 the nodes only after promotions to `staging` and `production`.
 Detailed runbook: [platform-gitops README → Phase 10b](https://github.com/andrewsgitacc/platform-gitops#phase-10b-runbook-kargo-for-puppet-code).
+
+Lessons from the build (10b): the `puppet` VM turned out to be the bare template — playbook 01
+had never finished for it — so the Puppet lab was rebuilt with playbooks 01–03, which now
+also set each hostname themselves (Puppet names its certificates after it); the order that
+gets a change onto the nodes is **promote → r10k deploy → agent run**, and running the agent
+before promoting correctly changed nothing; a `--noop` preview of `development` always shows
+`/etc/motd` and `/etc/puppet-managed` changing, since both print the environment name;
+Freight appears within the Warehouse's 2-minute interval after a merge; delete merged branches,
+or r10k keeps them as environments; all lab VMs share the template's SSH host key (Phase 11:
+regenerate on first boot). Promotions can also be created with `kubectl` (a Promotion resource)
+when the UI isn't to hand.
+
+Design choices (10b): environment **branches owned by Kargo** and a separate `main` for
+changes, so a node only ever runs code that passed CI and was promoted; all nodes on
+`production` with `development`/`staging` used for previews, rather than a node per
+environment; CI moved from Jenkins to **GitHub Actions** with a **branch rule**, so a red
+check blocks the merge instead of just reporting it; Kargo copies the commit without
+`.github/`, so its token needs only Contents permission; r10k still deploys feature branches
+for testing before a PR, but not `main`.
 
 ### Rebuilding the platform from scratch
 

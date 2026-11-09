@@ -66,8 +66,8 @@ ansible-playbook -i puppet_inventory.ini 04_configure_jenkins_for_puppet.yml -k 
 What each step does:
 
 1. **01**: Clones the `CentOS9aarch64` template three times, sets vCPU and RAM, and finds each VM's DHCP IP. It then sets the hostname, installs baseline packages and applies the static IP and lab DNS.
-2. **02**: Installs the OpenVox 8 repo, `openvox-server` and Java 17, and sets the JVM heap to 2 GB. It configures `puppet.conf` with `dns_alt_names` and enables autosigning for `*.lab.local`. It installs r10k into OpenVox's bundled Ruby and deploys every branch of the control repo except `main`. It adds a systemd timer (`r10k-deploy.timer`) that redeploys every 5 minutes, opens port 8140, starts `puppetserver`, and runs the agent once on the server itself.
-3. **03**: Installs `openvox-agent` and points it at `puppet.lab.local` with a 10-minute run interval. The first `puppet agent -t` run requests a certificate, which is autosigned, and applies the catalog. It then enables the `puppet` service.
+2. **02**: Sets the hostname (Puppet names the server certificate and CA after it), installs the OpenVox 8 repo, `openvox-server` and Java 17, and sets the JVM heap to 2 GB. It configures `puppet.conf` with `dns_alt_names` and enables autosigning for `*.lab.local`. It installs r10k into OpenVox's bundled Ruby and deploys every branch of the control repo except `main`. It adds a systemd timer (`r10k-deploy.timer`) that redeploys every 5 minutes, opens port 8140, starts `puppetserver`, and runs the agent once on the server itself.
+3. **03**: Sets each client's hostname, installs `openvox-agent` and points it at `puppet.lab.local` with a 10-minute run interval. The first `puppet agent -t` run requests a certificate, which is autosigned, and applies the catalog. It then enables the `puppet` service.
 4. **04**: Installs `openvox-agent` (CLI only, service disabled), `puppet-lint` and `r10k` on `jenkins.lab.local`.
 
 ## Verification
