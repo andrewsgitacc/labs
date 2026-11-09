@@ -4,7 +4,9 @@
 
 Deploys a Puppet server and two Puppet clients on CentOS Stream 9 VMs in VMware Fusion using Ansible. It uses **[OpenVox](https://voxpupuli.org/openvox/)**, the community-maintained, drop-in fork of open-source Puppet. Perforce no longer publishes free public builds of open-source Puppet.
 
-The Puppet code lives in a separate GitHub repo, **[puppet-control-repo](https://github.com/andrewsgitacc/puppet-control-repo)**. The server pulls it directly with **r10k** every 5 minutes, and each Git branch becomes a Puppet environment.
+The Puppet code lives in a separate GitHub repo, **[puppet-control-repo](https://github.com/andrewsgitacc/puppet-control-repo)**. The server pulls it directly with **r10k** every 5 minutes, and each Git branch except `main` becomes a Puppet environment.
+
+Since platform Phase 10b, changes are merged into the control repo's `main` (pull requests, CI on GitHub Actions) and **[Kargo](https://github.com/andrewsgitacc/labs/tree/main/platform#phase-10--kargo)** promotes them through the branches `development` → `staging` → `production`. All nodes run `production`; `development` and `staging` are for previewing a change (`puppet agent -t --noop --environment development`). The workflow is in the [control repo's README](https://github.com/andrewsgitacc/puppet-control-repo#workflow).
 
 | VM | FQDN | IP | vCPU / RAM |
 |---|---|---|---|
@@ -25,7 +27,7 @@ The Puppet code lives in a separate GitHub repo, **[puppet-control-repo](https:/
   ansible-galaxy collection install community.general ansible.posix
   ```
 - DNS server deployed (see `labs/dns`)
-- Optional: Jenkins deployed (see `labs/jenkins`) for CI on the control repo
+- Optional: Jenkins deployed (see `labs/jenkins`) — only for the old Jenkins CI (playbook 04); the control repo's CI now runs on GitHub Actions
 
 ## DNS
 
@@ -57,14 +59,14 @@ ansible-playbook -i puppet_inventory.ini 02_install_puppet_server.yml -k -K
 # 3. Install OpenVox Agent on both clients, run Puppet, enable the agent service
 ansible-playbook -i puppet_inventory.ini 03_install_puppet_agents.yml -k -K
 
-# 4. (Optional) Add puppet / puppet-lint / r10k to the Jenkins VM for control-repo CI
+# 4. (Optional, superseded by GitHub Actions in Phase 10b) Puppet CI tools on the Jenkins VM
 ansible-playbook -i puppet_inventory.ini 04_configure_jenkins_for_puppet.yml -k -K
 ```
 
 What each step does:
 
 1. **01**: Clones the `CentOS9aarch64` template three times, sets vCPU and RAM, and finds each VM's DHCP IP. It then sets the hostname, installs baseline packages and applies the static IP and lab DNS.
-2. **02**: Installs the OpenVox 8 repo, `openvox-server` and Java 17, and sets the JVM heap to 2 GB. It configures `puppet.conf` with `dns_alt_names` and enables autosigning for `*.lab.local`. It installs r10k into OpenVox's bundled Ruby and deploys every branch of the control repo. It adds a systemd timer (`r10k-deploy.timer`) that redeploys every 5 minutes, opens port 8140, starts `puppetserver`, and runs the agent once on the server itself.
+2. **02**: Installs the OpenVox 8 repo, `openvox-server` and Java 17, and sets the JVM heap to 2 GB. It configures `puppet.conf` with `dns_alt_names` and enables autosigning for `*.lab.local`. It installs r10k into OpenVox's bundled Ruby and deploys every branch of the control repo except `main`. It adds a systemd timer (`r10k-deploy.timer`) that redeploys every 5 minutes, opens port 8140, starts `puppetserver`, and runs the agent once on the server itself.
 3. **03**: Installs `openvox-agent` and points it at `puppet.lab.local` with a 10-minute run interval. The first `puppet agent -t` run requests a certificate, which is autosigned, and applies the catalog. It then enables the `puppet` service.
 4. **04**: Installs `openvox-agent` (CLI only, service disabled), `puppet-lint` and `r10k` on `jenkins.lab.local`.
 
@@ -83,7 +85,7 @@ On the Puppet server:
 ssh -q -t admin@172.16.79.70
 
 sudo /opt/puppetlabs/bin/puppetserver ca list --all    # both clients + server signed
-ls /etc/puppetlabs/code/environments                   # production (+ any other branches)
+ls /etc/puppetlabs/code/environments                   # development, production, staging (+ feature branches)
 systemctl list-timers r10k-deploy.timer                # next r10k run
 ```
 
@@ -99,20 +101,21 @@ sudo /opt/puppetlabs/bin/puppet agent -t       # should finish with no errors
 
 ### End-to-end test
 
-1. Change `profile::base::motd_message` in `data/common.yaml` in the control repo and push it.
-2. Wait for r10k, or force a deploy now: `ssh -t admin@172.16.79.70 "sudo systemctl start r10k-deploy.service"`
-3. Run the agent on client-02: `ssh -t admin@172.16.79.72 "sudo /opt/puppetlabs/bin/puppet agent -t"`
-4. `cat /etc/motd` on client-02 shows the new message.
+1. In the control repo, change `profile::base::motd_message` in `data/common.yaml` on a branch, open a PR into `main`, merge once **validate** is green.
+2. Kargo (project **puppet**) promotes it to `development` by itself within ~2 minutes. Wait for r10k, or force a deploy now: `ssh -t admin@172.16.79.70 "sudo systemctl start r10k-deploy.service"`
+3. Preview it on client-02 without changing anything: `ssh -t admin@172.16.79.72 "sudo /opt/puppetlabs/bin/puppet agent -t --noop --environment development"`
+4. In the Kargo UI promote the Freight to `staging`, then `production`; deploy r10k again and run the agent: `ssh -t admin@172.16.79.72 "sudo /opt/puppetlabs/bin/puppet agent -t"`
+5. `cat /etc/motd` on client-02 shows the new message.
 
-## Jenkins CI for the control repo
+## Jenkins CI for the control repo (before Phase 10b)
 
-After running playbook 04, create a Pipeline job in Jenkins (see `labs/jenkins/README.md`):
+The control repo's CI now runs on GitHub Actions (its `.github/workflows/validate.yml`) and the Jenkinsfile was removed. To use Jenkins again, after running playbook 04, create a Pipeline job in Jenkins (see `labs/jenkins/README.md`):
 
 - Name: `puppet-control-repo`
 - Definition: `Pipeline script from SCM`, SCM: `Git`
 - Repository URL: `https://github.com/andrewsgitacc/puppet-control-repo.git` *(public, no credentials needed)*
-- Branch: `*/production`
-- Script Path: `Jenkinsfile`
+- Branch: `*/main`
+- Script Path: `Jenkinsfile` (restore it from the control repo's history)
 
 The control repo's pipeline checks the Puppetfile, YAML, `puppet parser validate`, `puppet epp validate` and `puppet-lint`.
 

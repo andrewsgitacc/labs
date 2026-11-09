@@ -92,6 +92,10 @@
             control:
               remote: "{{ control_repo_url }}"
               basedir: /etc/puppetlabs/code/environments
+              # main is where changes are merged; Kargo copies them into the environment
+              # branches (development, staging, production), so main isn't an environment.
+              ignore_branch_prefixes:
+                - main
           git:
             provider: shellgit
 
