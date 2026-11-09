@@ -74,7 +74,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 7 | Keycloak | Keycloak, its PostgreSQL (CloudNativePG), trust-manager | **~16 GB** *measured* (~5.4 GB per worker, 57%; Keycloak + DB ~0.7 GB) | ~105 GB | 200 GB |
 | 8 | Harbor | core, registry, jobservice, portal, Trivy, Valkey, its PostgreSQL | **~18 GB** *measured* (5.6–6.5 GB per worker, 60–69%; Harbor ~0.3 GB at rest) | ~140 GB (images in Ceph) | 250 GB |
 | 9 | CI | ARC controller + listener, Renovate (hourly job); runner pods on demand (~0.5–2.5 GB each while building, max 2) | **~18.4 GB** *measured* idle (59–70% per worker); +up to ~2.5 GB per running build | ~160 GB | 250 GB |
-| 10 | Kargo | controller, API | ~21–24 GB | ~160 GB | 250 GB |
+| 10 | Kargo | API, controller, management controller, 2 webhook servers (~130 MB in total); sample-app ×4 pods (dev, staging, prod ×2). 10b adds nothing in the cluster, but the Puppet VMs need **+8 GB** on the Mac while they run | **~16.6 GiB** *measured* idle (48–70% per worker) | ~160 GB | 250 GB |
 | 11 | Hardening | Kyverno, Velero | ~22–25 GB | ~180 GB (backups) | 300 GB |
 
 > **Watch the workers' memory** with `kubectl top nodes` after each phase. After Phase 5 the
@@ -104,7 +104,7 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
 | 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
 | 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | ✅ done |
-| 10 | Kargo: sample-app dev → staging → prod (10a), Puppet code environments (10b) | 🚧 in progress |
+| 10 | Kargo: sample-app dev → staging → prod (10a ✅ done), Puppet code environments (10b ⏭️ next) | 🚧 in progress |
 | 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
 
 ## How to build each phase
@@ -604,6 +604,17 @@ Phase 10b will promote Puppet code (the control repo's environment branches) the
 Done when: new sample-app images reach dev automatically, and staging/prod by a promotion
 in the Kargo UI, with each stage's history in its `stage/*` branch.
 Detailed runbook: [platform-gitops README → Phase 10](https://github.com/andrewsgitacc/platform-gitops#phase-10-runbook-kargo).
+
+Lessons from the build: the first dev pod failed with **CreateContainerConfigError** —
+distroless's `USER nonroot` is a name, so Kubernetes can't verify `runAsNonRoot`; giving the
+pod (and now the image) the numeric UID 65532 fixed it; a change merged to
+sample-app-deploy's `main` reaches a stage only at its **next promotion** — merge first,
+then promote (re-promoting the same Freight is fine); a promotion with nothing new to
+commit "succeeds" without changing anything; the first sync of the Kargo project takes a
+minute while Kargo creates its namespace; a token pasted at a hidden prompt can arrive
+mangled (HTTP 401) — test it first. The end-to-end loop worked with no clicks into dev:
+merge in sample-app → CI in the cluster → Harbor scan → new Freight → dev, while staging and
+prod stayed on the previous release until promoted.
 
 Design choices: **rendered branches** (Kargo commits the fully rendered manifests per stage
 to `stage/<stage>`) rather than Kargo editing `main`, so `main` only changes through
