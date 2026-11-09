@@ -104,8 +104,8 @@ RAM, "Mac disk used" is real space used on the Mac by all lab VM disks). Phases 
 | 7 | Keycloak SSO: trust-manager (lab CA for pods), CloudNativePG, Keycloak; SSO for Argo CD and Grafana | ✅ done |
 | 8 | Harbor (v2.16.0-rc1, the first arm64 release): registry + Trivy, Keycloak login, Ceph S3 storage | ✅ done |
 | 9 | CI: ARC runners with rootless BuildKit, sample-app pipeline to Harbor, Renovate | ✅ done |
-| 10 | Kargo: sample-app dev → staging → prod (10a ✅ done), Puppet code environments (10b ⏭️ next) | 🚧 in progress |
-| 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | |
+| 10 | Kargo: sample-app dev → staging → prod (10a), Puppet code environments (10b) | ✅ done |
+| 11 | Hardening and day-2: Kyverno, Velero, alerts, k8s 1.36 → 1.37 upgrade, break/fix | ⏭️ next |
 
 ## How to build each phase
 
@@ -624,6 +624,79 @@ images picked by **newest build** among the CI's short-SHA tags (no semver relea
 the Kargo pipeline itself declared in Git (`platform-gitops/kargo/`), not clicked together in
 the UI; one **pull-only** Harbor robot account for Kargo and the stages' image pulls; no
 Argo Rollouts, so no automated verification yet (Phase 11 candidate).
+
+**10b — Puppet code.** The same idea for the Puppet control repo: you merge into its new
+`main` (pull requests, CI on GitHub Actions, a branch rule requiring it); every new commit
+becomes Freight in the Kargo project **puppet**, goes to the branch `development` by itself
+and to `staging` and `production` on a Promote click. r10k on `puppet.lab.local` deploys each
+branch as the Puppet environment of the same name (not `main`). All nodes run `production`;
+`development` and `staging` are previewed with `puppet agent -t --noop --environment <env>`.
+Nothing new runs in the cluster; the three Puppet VMs need **+8 GB** on the Mac while on.
+
+1. **Mac:** start the Puppet VMs:
+   ```bash
+   for n in puppet puppet-client-01 puppet-client-02; do
+     "/Applications/VMware Fusion.app/Contents/Public/vmrun" start "$HOME/Virtual Machines.localized/$n.vmwarevm/$n.vmx" nogui
+   done
+   ```
+2. **Mac:** create `main` in the control repo from `production`:
+   ```bash
+   cd ~/GitHub/puppet-control-repo && git checkout production && git pull && git push origin production:main
+   ```
+   **GitHub:** puppet-control-repo → Settings → General → Default branch → ⇄ → `main` → Update.
+3. **Mac:** push the control repo's `phase-10b-kargo` branch, open the PR into `main`, merge once
+   **validate** is green. Then **GitHub:** add the branch rule for `main` (platform-gitops
+   runbook, Phase 10b step 3).
+4. **Mac:** r10k skips `main` — push the labs `phase-10b-kargo` branch and re-run playbook 02 from it:
+   ```bash
+   cd ~/GitHub/labs && git checkout phase-10b-kargo && git push -u origin phase-10b-kargo
+   cd puppet && ansible-playbook -i puppet_inventory.ini 02_install_puppet_server.yml -k -K && cd ..
+   ```
+5. **Mac:** push the `phase-10b-kargo` branch in `platform-gitops`, open the PR, **don't merge yet**.
+6. **Utility server:** seal the Puppet project's Git token (the same `lab-kargo` token):
+   ```bash
+   cd ~/platform-gitops && git fetch && git checkout phase-10b-kargo && git pull
+   ./scripts/seal-kargo-secrets.sh --puppet-only
+   git checkout main
+   ```
+7. **Mac:** copy it to the branch (one `scp`, then a separate block):
+   ```bash
+   cd ~/GitHub/platform-gitops && git checkout phase-10b-kargo
+   scp -r admin@172.16.79.10:kargo-sealed /tmp/
+   ```
+   ```bash
+   cp /tmp/kargo-sealed/git-puppet-control-repo-sealedsecret.yaml kargo/puppet/
+   rm -rf /tmp/kargo-sealed
+   git add kargo/puppet && git commit -m "Phase 10b: sealed Kargo token for puppet-control-repo" && git push
+   ```
+8. **GitHub:** once the PR shows that commit and CI is green, merge. **Utility server:**
+   `kubectl -n puppet get freight,stages` — Freight from `main`, `development` promoted.
+9. **Mac:** preview `development` on a client, promote to `staging` and `production` in the
+   Kargo UI, deploy r10k and run the agent (platform-gitops runbook, Phase 10b steps 6–8).
+10. **Mac:** merge a MOTD change into `main` through a PR and follow it to `production`.
+
+Done when: a change merged to the control repo's `main` reaches `development` by itself and
+the nodes only after promotions to `staging` and `production`.
+Detailed runbook: [platform-gitops README → Phase 10b](https://github.com/andrewsgitacc/platform-gitops#phase-10b-runbook-kargo-for-puppet-code).
+
+Lessons from the build (10b): the `puppet` VM turned out to be the bare template — playbook 01
+had never finished for it — so the Puppet lab was rebuilt with playbooks 01–03, which now
+also set each hostname themselves (Puppet names its certificates after it); the order that
+gets a change onto the nodes is **promote → r10k deploy → agent run**, and running the agent
+before promoting correctly changed nothing; a `--noop` preview of `development` always shows
+`/etc/motd` and `/etc/puppet-managed` changing, since both print the environment name;
+Freight appears within the Warehouse's 2-minute interval after a merge; delete merged branches,
+or r10k keeps them as environments; all lab VMs share the template's SSH host key (Phase 11:
+regenerate on first boot). Promotions can also be created with `kubectl` (a Promotion resource)
+when the UI isn't to hand.
+
+Design choices (10b): environment **branches owned by Kargo** and a separate `main` for
+changes, so a node only ever runs code that passed CI and was promoted; all nodes on
+`production` with `development`/`staging` used for previews, rather than a node per
+environment; CI moved from Jenkins to **GitHub Actions** with a **branch rule**, so a red
+check blocks the merge instead of just reporting it; Kargo copies the commit without
+`.github/`, so its token needs only Contents permission; r10k still deploys feature branches
+for testing before a PR, but not `main`.
 
 ### Rebuilding the platform from scratch
 

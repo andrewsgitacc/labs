@@ -13,6 +13,14 @@
 
   tasks:
 
+    # --- Hostname ---
+
+    # Playbook 01 sets it too, but the server's certificate (and the CA it creates) is
+    # named after it, so make sure it's right before anything Puppet is installed.
+    - name: Set the hostname to the inventory name (puppet.lab.local)
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
     # --- Packages ---
 
     - name: Add the OpenVox 8 yum repository
@@ -92,6 +100,10 @@
             control:
               remote: "{{ control_repo_url }}"
               basedir: /etc/puppetlabs/code/environments
+              # main is where changes are merged; Kargo copies them into the environment
+              # branches (development, staging, production), so main isn't an environment.
+              ignore_branch_prefixes:
+                - main
           git:
             provider: shellgit
 

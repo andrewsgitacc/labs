@@ -61,8 +61,8 @@
 
     - name: Set static IP via NetworkManager
       community.general.nmcli:
-        conn_name: "{{ ansible_default_ipv4.interface }}"
-        ifname: "{{ ansible_default_ipv4.interface }}"
+        conn_name: "{{ ansible_facts['default_ipv4']['interface'] }}"
+        ifname: "{{ ansible_facts['default_ipv4']['interface'] }}"
         type: ethernet
         ip4: "{{ assigned_static_ip }}"
         gw4: "{{ static_gateway }}"
@@ -71,6 +71,6 @@
         state: present
 
     - name: Apply static IP (connection drops — this is expected)
-      ansible.builtin.shell: "sleep 2 && nmcli connection up {{ ansible_default_ipv4.interface }}"
+      ansible.builtin.shell: "sleep 2 && nmcli connection up {{ ansible_facts['default_ipv4']['interface'] }}"
       async: 10
       poll: 0

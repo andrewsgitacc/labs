@@ -4,6 +4,12 @@
   become: true
 
   tasks:
+    # Playbook 01 sets it too, but the agent's certificate is named after it, so make
+    # sure it's right before the first agent run.
+    - name: Set the hostname to the inventory name (puppet-client-0N.lab.local)
+      ansible.builtin.hostname:
+        name: "{{ inventory_hostname }}"
+
     - name: Add the OpenVox 8 yum repository
       ansible.builtin.yum_repository:
         name: openvox8
